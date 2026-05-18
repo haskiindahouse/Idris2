@@ -66,6 +66,8 @@ data Elab : Type -> Type where
      Check : TTImp -> Elab expected
      -- Quote a concrete expression back to a TTImp
      Quote : (0 _ : val) -> Elab TTImp
+     -- Normalise a TTImp term as a specific type
+     NormaliseAs : (0 expected : Type) -> TTImp -> Elab TTImp
 
      -- Elaborate under a lambda
      Lambda : (0 x : Type) ->
@@ -161,6 +163,10 @@ interface Monad m => Elaboration m where
   ||| Return TTImp syntax of a given value
   quote : (0 _ : val) -> m TTImp
 
+  ||| Normalise a TTImp term as a specific type
+  ||| Returns the normalised TTImp term
+  normaliseAs : (0 expected : Type) -> TTImp -> m TTImp
+
   ||| Build a lambda expression
   lambda : (0 x : Type) ->
            {0 ty : x -> Type} ->
@@ -241,6 +247,7 @@ Elaboration Elab where
   resugarTerm    = ResugarTerm
   check          = Check
   quote          = Quote
+  normaliseAs    = NormaliseAs
   lambda         = Lambda
   goal           = Goal
   localVars      = LocalVars
@@ -269,6 +276,7 @@ Elaboration m => MonadTrans t => Monad (t m) => Elaboration (t m) where
   resugarTerm         = lift .: resugarTerm
   check               = lift . check
   quote v             = lift $ quote v
+  normaliseAs e t     = lift $ normaliseAs e t
   lambda x            = lift . lambda x
   goal                = lift goal
   localVars           = lift localVars
