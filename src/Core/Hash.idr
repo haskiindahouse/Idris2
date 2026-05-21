@@ -153,6 +153,11 @@ Hashable ty => Hashable (Binder ty) where
 Hashable (Var vars) where
   hashWithSalt h (MkVar {varIdx = i} _) = hashWithSalt h i
 
+export
+Hashable ConTag where
+  hashWithSalt h (DConTag _ i) = h `hashWithSalt` 0 `hashWithSalt` i
+  hashWithSalt h (TConTag n) = h `hashWithSalt` 1 `hashWithSalt` n
+
 mutual
   export
   Hashable (Term vars) where
@@ -213,8 +218,8 @@ mutual
 
   export
   Hashable (CaseAlt vars) where
-    hashWithSalt h (ConCase x tag args y)
-        = h `hashWithSalt` 0 `hashWithSalt` x `hashWithSalt` args
+    hashWithSalt h (ConCase tag args y)
+        = h `hashWithSalt` 0 `hashWithSalt` tag `hashWithSalt` args
             `hashWithSalt` y
     hashWithSalt h (DelayCase t x y)
         = h `hashWithSalt` 2 `hashWithSalt` (show t)

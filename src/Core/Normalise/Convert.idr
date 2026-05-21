@@ -142,8 +142,8 @@ mutual
                       List (Var args, Var args') ->
                       CaseAlt args -> CaseAlt args' ->
                       Core (Maybe (List (Var args, Var args')))
-  getMatchingVarAlt defs ms (ConCase n tag cargs t) (ConCase n' tag' cargs' t')
-      = if n == n'
+  getMatchingVarAlt defs ms (ConCase tag cargs t) (ConCase tag' cargs' t')
+      = if tag == tag'
            then do let Just ms' = extend cargs cargs' ms
                         | Nothing => pure Nothing
                    Just ms <- getMatchingVars defs ms' t t'

@@ -38,7 +38,7 @@ emptyRHS : FC -> CaseTree vars -> CaseTree vars
 emptyRHS fc (Case idx el sc alts) = Case idx el sc (map emptyRHSalt alts)
   where
     emptyRHSalt : CaseAlt vars -> CaseAlt vars
-    emptyRHSalt (ConCase n t args sc) = ConCase n t args (emptyRHS fc sc)
+    emptyRHSalt (ConCase t args sc) = ConCase t args (emptyRHS fc sc)
     emptyRHSalt (DelayCase c arg sc) = DelayCase c arg (emptyRHS fc sc)
     emptyRHSalt (ConstCase c sc) = ConstCase c (emptyRHS fc sc)
     emptyRHSalt (DefaultCase sc) = DefaultCase (emptyRHS fc sc)
@@ -48,12 +48,13 @@ emptyRHS fc sc = sc
 export
 mkAlt : FC -> CaseTree vars -> DataCon -> CaseAlt vars
 mkAlt fc sc (MkDataCon cn t ar)
-    = ConCase cn t (map (MN "m") (take ar [0..]))
+    = ConCase (DConTag cn t)
+              (map (MN "m") (take ar [0..]))
               (weakenNs (map take) (emptyRHS fc sc))
 
 export
-tagIs : Int -> CaseAlt vars -> Bool
-tagIs t (ConCase _ t' _ _) = t == t'
+tagIs : ConTag -> CaseAlt vars -> Bool
+tagIs t (ConCase t' _ _) = t == t'
 tagIs t (ConstCase {}) = False
 tagIs t (DelayCase {}) = False
 tagIs t (DefaultCase _) = True

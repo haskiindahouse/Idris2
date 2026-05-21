@@ -1,0 +1,3 @@
+. ../../../testutils.sh
+
+idris2_no_clean Main.idr < input

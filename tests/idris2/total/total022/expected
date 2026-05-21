@@ -4,20 +4,18 @@ Arguments [{arg:1}, {arg:2}, {arg:3}, {arg:4}]
 Compile time tree: case {arg:1} of
   Nil {e:1} => case {arg:4} of
     Nothing {e:2} => ()
-    _ => case {arg:4} of
-      Just {e:3} {e:4} => case {e:4} of
-        Refl {e:5} {e:6} => f {arg:3} {arg:2} {arg:3} Nothing
+    Just {e:3} {e:4} => case {e:4} of
+      Refl {e:5} {e:6} => f {arg:3} {arg:2} {arg:3} Nothing
   (::) {e:7} {e:8} {e:9} => case {arg:4} of
     Nothing {e:10} => f {e:9} {arg:2} {arg:3} Nothing
-    _ => case {arg:4} of
-      Just {e:3} {e:4} => case {e:4} of
-        Refl {e:5} {e:6} => f {arg:3} {arg:2} {arg:3} Nothing
+    Just {e:3} {e:4} => case {e:4} of
+      Refl {e:5} {e:6} => f {arg:3} {arg:2} {arg:3} Nothing
   _ => case {arg:4} of
     Just {e:3} {e:4} => case {e:4} of
       Refl {e:5} {e:6} => f {arg:3} {arg:2} {arg:3} Nothing
 Compiled: \ {arg:1}, {arg:2}, {arg:3}, {arg:4} => case {arg:1} of
-  { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { _builtin.NOTHING {tag = 0} [nothing] => ___; _ => case {arg:4} of  { _builtin.JUST {tag = 1} [just] {e:4} => Main.f {arg:3} {arg:2} {arg:3} (_builtin.NOTHING {tag = 0} [nothing])}}
-  ; _builtin.CONS {tag = 1} [cons] {e:8} {e:9} => case {arg:4} of  { _builtin.NOTHING {tag = 0} [nothing] => Main.f {e:9} {arg:2} {arg:3} (_builtin.NOTHING {tag = 0} [nothing]); _ => case {arg:4} of  { _builtin.JUST {tag = 1} [just] {e:4} => Main.f {arg:3} {arg:2} {arg:3} (_builtin.NOTHING {tag = 0} [nothing])}}
+  { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { _builtin.NOTHING {tag = 0} [nothing] => ___; _builtin.JUST {tag = 1} [just] {e:4} => Main.f {arg:3} {arg:2} {arg:3} (_builtin.NOTHING {tag = 0} [nothing])}
+  ; _builtin.CONS {tag = 1} [cons] {e:8} {e:9} => case {arg:4} of  { _builtin.NOTHING {tag = 0} [nothing] => Main.f {e:9} {arg:2} {arg:3} (_builtin.NOTHING {tag = 0} [nothing]); _builtin.JUST {tag = 1} [just] {e:4} => Main.f {arg:3} {arg:2} {arg:3} (_builtin.NOTHING {tag = 0} [nothing])}
   ; _ => case {arg:4} of
            { _builtin.JUST {tag = 1} [just] {e:4} => Main.f {arg:3} {arg:2} {arg:3} (_builtin.NOTHING {tag = 0} [nothing])
            }

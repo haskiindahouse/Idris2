@@ -251,7 +251,7 @@ mutual
            caseAltsInlineSafe as
 
   caseAltInlineSafe : InlineSafe CaseAlt
-  caseAltInlineSafe (ConCase x tag args sc)
+  caseAltInlineSafe (ConCase tag args sc)
       -- should these be local vars?
       = inExtended Used0 (mkSizeOf args) (\u' => caseInlineSafe sc)
   caseAltInlineSafe (DelayCase ty arg sc)

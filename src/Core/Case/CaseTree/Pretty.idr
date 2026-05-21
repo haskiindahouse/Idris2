@@ -15,19 +15,20 @@ namespace Raw
   prettyTree : {vars : _} -> CaseTree vars -> Doc IdrisSyntax
   prettyAlt : {vars : _} -> CaseAlt vars -> Doc IdrisSyntax
 
-  prettyTree (Case {name} idx prf ty alts)
+  prettyTree (Case idx prf ty alts)
       = let ann = case ty of
                     Erased {} => ""
                     _ => space <+> keyword ":" <++> byShow ty
-        in case_ <++> annotate Bound (pretty0 name) <+> ann <++> of_
+        in case_ <++> annotate Bound (pretty0 $ nameAt prf) <+> ann <++> of_
          <+> nest 2 (hardline
          <+> vsep (assert_total (map prettyAlt alts)))
   prettyTree (STerm i tm) = byShow tm
   prettyTree (Unmatched msg) = "Error:" <++> pretty0 msg
   prettyTree Impossible = "Impossible"
 
-  prettyAlt (ConCase n tag args sc)
-      = hsep (annotate (DCon (Just n)) (pretty0 n) ::  map pretty0 args)
+  prettyAlt (ConCase tag args sc)
+      = let n = conName tag in
+        hsep (annotate (DCon (Just n)) (pretty0 n) ::  map pretty0 args)
         <++> fatArrow
         <+> let sc = prettyTree sc in
             Union (spaces 1 <+> sc) (nest 2 (hardline <+> sc))
@@ -66,19 +67,20 @@ namespace Resugared
     {auto s : Ref Syn SyntaxInfo} ->
     Env Term vars -> CaseAlt vars -> Core (Doc IdrisSyntax)
 
-  prettyTree env (Case {name} idx prf ty alts) = do
+  prettyTree env (Case idx prf ty alts) = do
     ann <- case ty of
              Erased {} => pure ""
              _ => do ty <- resugar env ty
                      pure (space <+> keyword ":" <++> pretty ty)
     alts <- assert_total (traverse (prettyAlt env) alts)
-    pure $ case_ <++> pretty0 name <+> ann <++> of_
+    pure $ case_ <++> pretty0 (nameAt prf) <+> ann <++> of_
        <+> nest 2 (hardline <+> vsep alts)
   prettyTree env (STerm i tm) = pretty <$> resugar env tm
   prettyTree env (Unmatched msg) = pure ("Error:" <++> pretty0 msg)
   prettyTree env Impossible = pure "Impossible"
 
-  prettyAlt env (ConCase n tag args sc) = do
+  prettyAlt env (ConCase tag args sc) = do
+    let n = conName tag
     con <- prettyName n
     sc <- prettyTree (mkEnvOnto emptyFC args env) sc
     pure $ hsep (annotate (DCon (Just n)) con ::  map pretty0 args)

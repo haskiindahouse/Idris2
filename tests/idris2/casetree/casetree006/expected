@@ -1,0 +1,48 @@
+1/1: Building Main (Main.idr)
+Main> Main.dropIdx
+Arguments [{arg:0}, {arg:1}, {arg:2}, {arg:3}, {arg:4}, {arg:5}]
+Compile time tree: case {arg:1} of
+  (::) {e:16} {e:17} {e:18} => case {arg:2} of
+    Z => case {arg:3} of
+      Nil {e:20} => case {arg:4} of
+        (::) {e:21} {e:22} {e:23} {e:24} => case {e:23} of
+          False => case {arg:5} of
+            First {e:25} {e:26} {e:27} => 1
+          True => case {arg:5} of
+            First {e:28} {e:29} {e:30} => 2
+      (::) {e:1} {e:2} {e:3} => case {arg:5} of
+        First {e:4} {e:5} {e:6} => 5
+    S {e:19} => case {arg:3} of
+      Nil {e:31} => case {arg:4} of
+        (::) {e:32} {e:33} {e:34} {e:35} => case {e:34} of
+          False => case {arg:5} of
+            Later {e:36} {e:37} {e:38} {e:39} {e:40} {e:41} => 3
+          True => case {arg:5} of
+            Later {e:42} {e:43} {e:44} {e:45} {e:46} {e:47} => 4
+      (::) {e:7} {e:8} {e:9} => case {arg:5} of
+        Later {e:10} {e:11} {e:12} {e:13} {e:14} {e:15} => 6
+  _ => case {arg:2} of
+    Z => case {arg:3} of
+      (::) {e:1} {e:2} {e:3} => case {arg:5} of
+        First {e:4} {e:5} {e:6} => 5
+    S {e:0} => case {arg:3} of
+      (::) {e:7} {e:8} {e:9} => case {arg:5} of
+        Later {e:10} {e:11} {e:12} {e:13} {e:14} {e:15} => 6
+Erasable args: [0, 5]
+Detaggable arg types: [4, 5]
+Inferrable args: [0, 2]
+Compiled: \ {arg:1}, {arg:2}, {arg:3}, {arg:4} => case {arg:1} of
+  { _builtin.CONS {tag = 1} [cons] {e:8} {e:9} => case {arg:2} of  { 0 => case {arg:3} of  { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { _builtin.CONS {tag = 1} [cons] {e:14} {e:15} => case {e:14} of  { 0 => 1; 1 => 2}}; _builtin.CONS {tag = 1} [cons] {e:2} {e:3} => 5}; _ => case {arg:3} of  { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { _builtin.CONS {tag = 1} [cons] {e:19} {e:20} => case {e:19} of  { 0 => 3; 1 => 4}}; _builtin.CONS {tag = 1} [cons] {e:5} {e:6} => 6}}
+  ; _ => case {arg:2} of
+           { 0 => case {arg:3} of
+                    { _builtin.CONS {tag = 1} [cons] {e:2} {e:3} => 5
+                    }
+           ; _ => case {arg:3} of
+                    { _builtin.CONS {tag = 1} [cons] {e:5} {e:6} => 6
+                    }
+           }
+  }
+Refers to (runtime): _builtin.CONS, _builtin.NIL
+Flags: covering
+Main> 
+Bye for now!

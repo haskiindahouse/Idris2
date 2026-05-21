@@ -516,6 +516,14 @@ HasNames Pat where
   resolved gam (PLoc fc n) = PLoc fc <$> resolved gam n
   resolved gam (PUnmatchable fc t) = PUnmatchable fc <$> resolved gam t
 
+export
+HasNames ConTag where
+  full gam (DConTag n i) = DConTag <$> full gam n <*> pure i
+  full gam (TConTag n) = TConTag <$> full gam n
+
+  resolved gam (DConTag n i) = DConTag <$> resolved gam n <*> pure i
+  resolved gam (TConTag n) = TConTag <$> resolved gam n
+
 mutual
   export
   HasNames (CaseTree vars) where
@@ -533,11 +541,8 @@ mutual
 
   export
   HasNames (CaseAlt vars) where
-    full gam (ConCase n t args sc)
-        = do sc' <- full gam sc
-             Just gdef <- lookupCtxtExact n gam
-                | Nothing => pure (ConCase n t args sc')
-             pure $ ConCase (fullname gdef) t args sc'
+    full gam (ConCase t args sc)
+        = pure $ ConCase !(full gam t) args !(full gam sc)
     full gam (DelayCase ty arg sc)
         = pure $ DelayCase ty arg !(full gam sc)
     full gam (ConstCase c sc)
@@ -545,11 +550,8 @@ mutual
     full gam (DefaultCase sc)
         = pure $ DefaultCase !(full gam sc)
 
-    resolved gam (ConCase n t args sc)
-        = do sc' <- resolved gam sc
-             let Just i = getNameID n gam
-                | Nothing => pure (ConCase n t args sc')
-             pure $ ConCase (Resolved i) t args sc'
+    resolved gam (ConCase t args sc)
+        = pure $ ConCase t args !(resolved gam sc)
     resolved gam (DelayCase ty arg sc)
         = pure $ DelayCase ty arg !(resolved gam sc)
     resolved gam (ConstCase c sc)

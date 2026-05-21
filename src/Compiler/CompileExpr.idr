@@ -209,27 +209,22 @@ mutual
              Name -> List (CaseAlt vars) ->
              Core (List (CConAlt vars))
   conCases n [] = pure []
-  conCases {vars} n (ConCase x tag args sc :: ns)
-      = do defs <- get Ctxt
-           Just gdef <- lookupCtxtExact x (gamma defs)
+  conCases {vars} n (ConCase tag args sc :: ns)
+      = do let n = conName tag
+           defs <- get Ctxt
+           Just gdef <- lookupCtxtExact n (gamma defs)
                 | Nothing => -- primitive type match
-                     do xn <- getFullName x
+                     do xn <- getFullName n
                         pure $ MkConAlt xn TYCON Nothing args !(toCExpTree n sc)
                                   :: !(conCases n ns)
            case (definition gdef) of
                 DCon _ arity (Just pos) => conCases n ns -- skip it
-                _ => do xn <- getFullName x
+                _ => do xn <- getFullName n
                         let (args' ** sub)
                             = mkDropSubst 0 (eraseArgs gdef) vars args
                         sc' <- toCExpTree n sc
                         ns' <- conCases n ns
-                        if dcon (definition gdef)
-                           then pure $ MkConAlt xn !(dconFlag xn) (Just tag) args' (shrinkCExp sub sc') :: ns'
-                           else pure $ MkConAlt xn !(dconFlag xn) Nothing args' (shrinkCExp sub sc') :: ns'
-    where
-      dcon : Def -> Bool
-      dcon (DCon {}) = True
-      dcon _ = False
+                        pure $ MkConAlt xn !(dconFlag xn) (tagOrder tag) args' (shrinkCExp sub sc') :: ns'
   conCases n (_ :: ns) = conCases n ns
 
   constCases : {vars : _} ->
@@ -257,9 +252,9 @@ mutual
   getNewType fc scr n [] = pure Nothing
   getNewType fc scr n (DefaultCase sc :: ns)
       = pure $ Nothing
-  getNewType {vars} fc scr n (ConCase x tag args sc :: ns)
+  getNewType {vars} fc scr n (ConCase tag args sc :: ns)
       = do defs <- get Ctxt
-           case !(lookupDefExact x (gamma defs)) of
+           case !(lookupDefExact (conName tag) (gamma defs)) of
                 -- If the flag is False, we still take the
                 -- default, but need to evaluate the scrutinee of the
                 -- case anyway - if the data structure contains a %World,
@@ -332,7 +327,7 @@ mutual
                 {auto c : Ref Ctxt Defs} ->
                 Name -> CaseTree vars ->
                 Core (CExp vars)
-  toCExpTree' n (Case _ x scTy alts@(ConCase _ _ _ _ :: _))
+  toCExpTree' n (Case _ x scTy alts@(ConCase {} :: _))
       = let fc = getLoc scTy in
             do Nothing <- getNewType fc (CLocal fc x) n alts
                    | Just def => pure def

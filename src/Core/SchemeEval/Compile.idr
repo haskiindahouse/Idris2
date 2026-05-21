@@ -310,7 +310,7 @@ compileCase : Ref Sym Integer =>
               (blocked : SchemeObj Write) ->
               SchVars vars -> CaseTree vars -> Core (SchemeObj Write)
 compileCase blk svs (Case idx p scTy xs)
-    = case !(caseType xs) of
+    = case caseType xs of
            CON => toSchemeConCases idx p xs
            TYCON => toSchemeTyConCases idx p xs
            DELAY => toSchemeDelayCases idx p xs
@@ -318,19 +318,13 @@ compileCase blk svs (Case idx p scTy xs)
   where
     data CaseType = CON | TYCON | DELAY | CONST
 
-    caseType : List (CaseAlt vs) -> Core CaseType
-    caseType [] = pure CON
-    caseType (ConCase x tag args y :: xs)
-        = do defs <- get Ctxt
-             Just gdef <- lookupCtxtExact x (gamma defs)
-                  | Nothing => pure TYCON -- primitive type match
-             case definition gdef of
-                  DCon {} => pure CON
-                  TCon {} => pure TYCON
-                  _ => pure CON -- or maybe throw?
-    caseType (DelayCase ty arg x :: xs) = pure DELAY
-    caseType (ConstCase x y :: xs) = pure CONST
-    caseType (DefaultCase x :: xs) = caseType xs
+    caseType : List (CaseAlt vs) -> CaseType
+    caseType [] = CON
+    caseType (ConCase (DConTag {}) _ _ :: _) = CON
+    caseType (ConCase (TConTag {}) _ _ :: _) = TYCON
+    caseType (DelayCase _ _ _ :: _) = DELAY
+    caseType (ConstCase _ _ :: _) = CONST
+    caseType (DefaultCase _ :: xs) = caseType xs
 
     makeDefault : List (CaseAlt vars) -> Core (SchemeObj Write)
     makeDefault [] = pure blk
@@ -366,9 +360,8 @@ compileCase blk svs (Case idx p scTy xs)
 
         makeAlt : String -> CaseAlt vars ->
                   Core (Maybe (SchemeObj Write, SchemeObj Write))
-        makeAlt var (ConCase n t args sc)
+        makeAlt var (ConCase (DConTag _ t) args sc)
             = pure $ Just (IntegerVal (cast t), !(bindArgs var args sc))
-        -- TODO: Matching on types, including ->
         makeAlt var _ = pure Nothing
 
     toSchemeTyConCases : (idx : Nat) -> (0 p : IsVar n idx vars) ->
@@ -401,10 +394,10 @@ compileCase blk svs (Case idx p scTy xs)
 
         makeAlt : String -> CaseAlt vars ->
                   Core (Maybe (SchemeObj Write, SchemeObj Write))
-        makeAlt var (ConCase (UN (Basic "->")) t [_, _] sc)
+        makeAlt var (ConCase (TConTag (UN (Basic "->"))) [_, _] sc)
             = pure Nothing -- do this in 'addPiMatch' below, since the
                            -- representation is different
-        makeAlt var (ConCase n t args sc)
+        makeAlt var (ConCase (TConTag n) args sc)
             = pure $ Just (StringVal (show n), !(bindArgs var args sc))
         makeAlt var _ = pure Nothing
 
@@ -414,7 +407,7 @@ compileCase blk svs (Case idx p scTy xs)
         -- t is a function type, and conveniently the scope of a pi
         -- binding is represented as a function. Lucky us! So we just need
         -- to extract it then evaluate the scope
-        addPiMatch var (ConCase (UN (Basic "->")) _ [s, t] sc :: _) def
+        addPiMatch var (ConCase (TConTag (UN (Basic "->"))) [s, t] sc :: _) def
             = do sn <- getArgName
                  tn <- getArgName
                  let svs' = Bound (schVarName sn) ::

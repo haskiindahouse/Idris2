@@ -1,5 +1,6 @@
 module Core.TT.Term.Subst
 
+import Core.FC
 import Core.Name.Scoped
 
 import Core.TT.Binder
@@ -54,3 +55,8 @@ substs dropped env tm = substTerm zero dropped env tm
 export
 subst : Term vars -> Term (Scope.bind vars x) -> Term vars
 subst val tm = substs (suc zero) [val] tm
+
+export
+substTermVar : Substitutable Var Term
+substTermVar outer dropped env tm =
+  substTerm outer dropped (map (\(MkVar p) => Local emptyFC Nothing _ p) env) tm

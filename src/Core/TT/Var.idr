@@ -169,14 +169,18 @@ export
 mkVarChiply : SizeOf inner -> Var (inner <>> nm :: outer)
 mkVarChiply (MkSizeOf s p) = MkVar (mkIsVarChiply p)
 
+export
+allVarsPrefix : SizeOf vars -> List (Var (vars ++ outer))
+allVarsPrefix = go [<] where
+  go : SizeOf local -> SizeOf vs -> List (Var (local <>> vs ++ outer))
+  go s (MkSizeOf Z Z) = []
+  go s (MkSizeOf (S k) (S l)) = mkVarChiply s :: go (suc s) (MkSizeOf k l)
+
 ||| Generate all variables
 export
 allVars : (vars : Scope) -> List (Var vars)
-allVars = go [<] where
-
-  go : SizeOf local -> (vs : Scope) -> List (Var (local <>> vs))
-  go s [] = []
-  go s (v :: vs) = mkVarChiply s :: go (s :< v) vs
+allVars vars = rewrite sym (appendNilRightNeutral vars)
+               in allVarsPrefix (mkSizeOf vars)
 
 export
 Eq (Var xs) where

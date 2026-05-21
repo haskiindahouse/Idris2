@@ -1,0 +1,5 @@
+test : Bool -> Maybe Bool -> ()
+test x     Nothing      = ()
+test True  (Just y)     = ()
+test x     (Just False) = ()
+test False (Just True)  = ()

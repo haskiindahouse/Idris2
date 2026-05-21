@@ -465,11 +465,26 @@ TTC Pat where
                      pure (PUnmatchable fc x)
              _ => corrupt "Pat"
 
+export
+TTC ConTag where
+  toBuf (DConTag n i)
+      = do tag 0; toBuf n; toBuf i
+  toBuf (TConTag n)
+      = do tag 1; toBuf n
+
+  fromBuf
+      = case !getTag of
+             0 => do n <- fromBuf; i <- fromBuf
+                     pure (DConTag n i)
+             1 => do n <- fromBuf
+                     pure (TConTag n)
+             _ => corrupt "ConTag"
+
 mutual
   export
   {vars : _} -> TTC (CaseTree vars) where
-    toBuf (Case {name} idx x scTy xs)
-        = do tag 0; toBuf name; toBuf idx; toBuf xs
+    toBuf (Case idx x scTy xs)
+        = do tag 0; toBuf idx; toBuf xs
     toBuf (STerm _ x)
         = do tag 1; toBuf x
     toBuf (Unmatched msg)
@@ -478,8 +493,10 @@ mutual
 
     fromBuf
         = case !getTag of
-               0 => do name <- fromBuf; idx <- fromBuf
+               0 => do idx <- fromBuf
                        xs <- fromBuf
+                       name <- maybe (corrupt "Term") pure
+                                     (getAt idx vars)
                        pure (Case {name} idx (mkPrf idx) (Erased emptyFC Placeholder) xs)
                1 => do x <- fromBuf
                        pure (STerm 0 x)
@@ -490,8 +507,8 @@ mutual
 
   export
   {vars : _} -> TTC (CaseAlt vars) where
-    toBuf (ConCase x t args y)
-        = do tag 0; toBuf x; toBuf t; toBuf args; toBuf y
+    toBuf (ConCase t args y)
+        = do tag 0; toBuf t; toBuf args; toBuf y
     toBuf (DelayCase ty arg y)
         = do tag 1; toBuf ty; toBuf arg; toBuf y
     toBuf (ConstCase x y)
@@ -501,9 +518,9 @@ mutual
 
     fromBuf
         = case !getTag of
-               0 => do x <- fromBuf; t <- fromBuf
+               0 => do t <- fromBuf
                        args <- fromBuf; y <- fromBuf
-                       pure (ConCase x t args y)
+                       pure (ConCase t args y)
                1 => do ty <- fromBuf; arg <- fromBuf; y <- fromBuf
                        pure (DelayCase ty arg y)
                2 => do x <- fromBuf; y <- fromBuf

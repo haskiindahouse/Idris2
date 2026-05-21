@@ -1,0 +1,5 @@
+. ../../../testutils.sh
+
+check Issue550.idr
+echo "------"
+idris2 Issue550Shrinked.idr < input

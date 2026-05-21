@@ -4,6 +4,11 @@ import public Data.List
 
 %default total
 
+public export
+mcons : Maybe a -> List a -> List a
+mcons Nothing xs = xs
+mcons (Just x) xs = x :: xs
+
 ||| Fetches the element at a given position.
 ||| Returns `Nothing` if the position beyond the list's end.
 public export

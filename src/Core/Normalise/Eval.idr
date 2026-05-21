@@ -360,36 +360,36 @@ parameters (defs : Defs) (topopts : EvalOpts)
     tryAlt {more} env loc opts fc stk (NErased _ (Dotted tm)) alt
          = tryAlt {more} env loc opts fc stk tm alt
     -- Ordinary constructor matching
-    tryAlt {more} env loc opts fc stk (NDCon _ nm tag' arity args') (ConCase x tag args sc)
+    tryAlt {more} env loc opts fc stk (NDCon _ nm tag' arity args') (ConCase (DConTag _ tag) args sc)
          = if tag == tag'
               then evalConAlt env loc opts fc stk args (map snd args') sc
               else pure NoMatch
     -- Type constructor matching, in typecase
-    tryAlt {more} env loc opts fc stk (NTCon _ nm arity args') (ConCase nm' tag args sc)
+    tryAlt {more} env loc opts fc stk (NTCon _ nm arity args') (ConCase (TConTag nm') args sc)
          = if nm == nm'
               then evalConAlt env loc opts fc stk args (map snd args') sc
               else pure NoMatch
     -- Primitive type matching, in typecase
-    tryAlt env loc opts fc stk (NPrimVal _ c) (ConCase nm tag args sc)
+    tryAlt env loc opts fc stk (NPrimVal _ c) (ConCase (TConTag nm) args sc)
          = case args of -- can't just test for it in the `if` for typing reasons
              [] => if UN (Basic $ show c) == nm
                    then evalTree env loc opts fc stk sc
                    else pure NoMatch
              _ => pure NoMatch
     -- Type of type matching, in typecase
-    tryAlt env loc opts fc stk (NType {}) (ConCase (UN (Basic "Type")) tag [] sc)
+    tryAlt env loc opts fc stk (NType {}) (ConCase (TConTag (UN (Basic "Type"))) [] sc)
          = evalTree env loc opts fc stk sc
     tryAlt env loc opts fc stk (NType {}) (ConCase {})
          = pure NoMatch
     -- Arrow matching, in typecase
     tryAlt {more}
-           env loc opts fc stk (NBind pfc x (Pi fc' r e aty) scty) (ConCase (UN (Basic "->")) tag [s,t] sc)
+           env loc opts fc stk (NBind pfc x (Pi fc' r e aty) scty) (ConCase (TConTag (UN (Basic "->"))) [s,t] sc)
        = evalConAlt {more} env loc opts fc stk [s,t]
                   [aty,
                    MkNFClosure opts env (NBind pfc x (Lam fc' r e aty) scty)]
                   sc
     tryAlt {more}
-           env loc opts fc stk (NBind pfc x (Pi fc' r e aty) scty) (ConCase nm tag args sc)
+           env loc opts fc stk (NBind pfc x (Pi fc' r e aty) scty) (ConCase tag args sc)
        = pure NoMatch
     -- Delay matching
     tryAlt env loc opts fc stk (NDelay _ _ ty arg) (DelayCase tyn argn sc)
@@ -439,13 +439,13 @@ parameters (defs : Defs) (topopts : EvalOpts)
                EvalOpts -> FC ->
                Stack free -> CaseTree args ->
                Core (CaseResult (TermWithEnv free))
-    evalTree env loc opts fc stk (Case {name} idx x _ alts)
+    evalTree env loc opts fc stk (Case idx x _ alts)
       = do xval <- evalLocal env fc Nothing idx (embedIsVar x) [] loc
            -- we have not defined quote yet (it depends on eval itself) so we show the NF
            -- i.e. only the top-level constructor.
            logC "eval.casetree" 5 $ do
              xval <- toFullNames xval
-             pure "Evaluated \{show name} to \{show xval}"
+             pure "Evaluated \{show (nameAt x)} to \{show xval}"
            let loc' = updateLocal opts env idx (embedIsVar x) loc xval
            findAlt env loc' opts fc stk xval alts
     evalTree env loc opts fc stk (STerm _ tm)

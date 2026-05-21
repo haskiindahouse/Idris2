@@ -1,6 +1,6 @@
 module Core.Case.CaseBuilder
 
-import Core.Case.CaseTree
+import Core.Case.Optimise
 import Core.Case.Util
 import Core.Context.Log
 import Core.Env
@@ -20,8 +20,6 @@ import Libraries.Data.List.SizeOf
 import Libraries.Data.List.LengthMatch
 import Libraries.Data.List01
 import Libraries.Data.List01.Quantifiers
-
-import Decidable.Equality
 
 import Libraries.Text.PrettyPrint.Prettyprinter
 
@@ -233,13 +231,12 @@ Weaken (NamedPats todo) where
 tail : NamedPats (p :: ps) vars -> NamedPats ps vars
 tail (x :: xs) = xs
 
-data PatClause : (todo : List Name) -> Scoped where
-     MkPatClause : List Name -> -- names matched so far (from original lhs)
-                   NamedPats todo vars ->
-                   Int -> (rhs : Term vars) -> PatClause todo vars
-
-getNPs : PatClause todo vars -> NamedPats todo vars
-getNPs (MkPatClause _ lhs pid rhs) = lhs
+record PatClause (todo : List Name) (vars : Scope) where
+  constructor MkPatClause
+  clauseVars : List Name -- names matched so far (from original lhs)
+  clausePats : NamedPats todo vars
+  clauseId   : Int
+  clauseRHS  : Term vars
 
 covering
 {vars : _} -> {todo : _} -> Show (PatClause todo vars) where
@@ -365,14 +362,20 @@ partition phase (x :: xs) with (partition phase xs)
                VarClause => VarClauses [x] NoClauses
 
 data ConType : Type where
-     CName : Name -> (tag : Int) -> ConType
+     CName : ConTag -> ConType
      CDelay : ConType
      CConst : Constant -> ConType
+
+conTypeEq : (x, y : ConType) -> Maybe (x = y)
+conTypeEq (CName tag) (CName tag') = (\xy => cong CName xy) <$> conTagEq tag tag'
+conTypeEq CDelay CDelay = Just Refl
+conTypeEq (CConst x) (CConst y) = (\xy => cong CConst xy) <$> constantEq x y
+conTypeEq _ _ = Nothing
 
 data Group : List Name -> -- pattern variables still to process
              Scoped where
      ConGroup : {newargs : _} ->
-                Name -> (tag : Int) ->
+                ConTag ->
                 List01 True (PatClause (newargs ++ todo) (newargs ++ vars)) ->
                 Group todo vars
      DelayGroup : {tyarg, valarg : _} ->
@@ -384,14 +387,14 @@ data Group : List Name -> -- pattern variables still to process
 
 covering
 {vars : _} -> {todo : _} -> Show (Group todo vars) where
-  show (ConGroup c t cs) = "Con " ++ show c ++ ": " ++ show cs
+  show (ConGroup tag cs) = "Con " ++ show (conName tag) ++ ": " ++ show cs
   show (DelayGroup cs) = "Delay: " ++ show cs
   show (ConstGroup c cs) = "Const " ++ show c ++ ": " ++ show cs
 
 data GroupMatch : ConType -> List Pat -> Group todo vars -> Type where
-     ConMatch : {tag : Int} -> LengthMatch ps newargs ->
-                GroupMatch (CName n tag) ps
-                  (ConGroup {newargs} n tag (MkPatClause pvs pats pid rhs :: rest))
+     ConMatch : {tag : ConTag} -> LengthMatch ps newargs ->
+                GroupMatch (CName tag) ps
+                  (ConGroup {newargs} tag (MkPatClause pvs pats pid rhs :: rest))
      DelayMatch : GroupMatch CDelay []
                     (DelayGroup {tyarg} {valarg} (MkPatClause pvs pats pid rhs :: rest))
      ConstMatch : GroupMatch (CConst c) []
@@ -400,13 +403,13 @@ data GroupMatch : ConType -> List Pat -> Group todo vars -> Type where
 
 checkGroupMatch : (c : ConType) -> (ps : List Pat) -> (g : Group todo vars) ->
                   GroupMatch c ps g
-checkGroupMatch (CName x tag) ps (ConGroup {newargs} x' tag' (MkPatClause pvs pats pid rhs :: rest))
+checkGroupMatch (CName tag) ps (ConGroup {newargs} tag' (MkPatClause pvs pats pid rhs :: rest))
     = case checkLengthMatch ps newargs of
            Nothing => NoMatch
-           Just prf => case (nameEq x x', decEq tag tag') of
-                            (Just Refl, Yes Refl) => ConMatch prf
+           Just prf => case (conTagEq tag tag') of
+                            Just Refl => ConMatch prf
                             _ => NoMatch
-checkGroupMatch (CName x tag) ps _ = NoMatch
+checkGroupMatch (CName tag) ps _ = NoMatch
 checkGroupMatch CDelay [] (DelayGroup (MkPatClause pvs pats pid rhs :: rest))
     = DelayMatch
 checkGroupMatch (CConst c) [] (ConstGroup c' (MkPatClause pvs pats pid rhs :: rest))
@@ -502,7 +505,7 @@ groupCons fc fn pvars (x :: xs) {isCons = p :: ps}
     = foldlC (uncurry . gc) !(gc [] x p) $ pushIn xs ps
   where
     addConG : {vars', todo' : _} ->
-              Name -> (tag : Int) ->
+              ConTag ->
               List Pat -> NamedPats todo' vars' ->
               Int -> (rhs : Term vars') ->
               (acc : List01 ne (Group todo' vars')) ->
@@ -511,13 +514,13 @@ groupCons fc fn pvars (x :: xs) {isCons = p :: ps}
     -- add new pattern arguments for each of that constructor's arguments.
     -- The type of 'ConGroup' ensures that we refer to the arguments by
     -- the same name in each of the clauses
-    addConG n tag pargs pats pid rhs []
-        = do cty <- if n == UN (Basic "->")
+    addConG tag pargs pats pid rhs []
+        = do cty <- if tag == TConTag (UN (Basic "->"))
                       then pure $ NBind fc (MN "_" 0) (Pi fc top Explicit (MkNFClosure defaultOpts (mkEnv fc vars') (NType fc (MN "top" 0)))) $
                               (\d, a => pure $ NBind fc (MN "_" 1) (Pi fc top Explicit (MkNFClosure defaultOpts (mkEnv fc vars') (NErased fc Placeholder)))
                                 (\d, a => pure $ NType fc (MN "top" 0)))
                       else do defs <- get Ctxt
-                              Just t <- lookupTyExact n (gamma defs)
+                              Just t <- lookupTyExact (conName tag) (gamma defs)
                                    | Nothing => pure (NErased fc Placeholder)
                               nf defs (mkEnv fc vars') (embed t)
              (patnames ** (l, newargs)) <- nextNames fc "e" pargs (Just cty)
@@ -526,10 +529,10 @@ groupCons fc fn pvars (x :: xs) {isCons = p :: ps}
              let pats' = updatePatNames (updateNames (zip patnames pargs))
                                         (weakenNs l pats)
              let clause = MkPatClause pvars (newargs ++ pats') pid (weakenNs l rhs)
-             pure [ConGroup n tag [clause]]
-    addConG n tag pargs pats pid rhs (g :: gs) with (checkGroupMatch (CName n tag) pargs g)
-      addConG n tag pargs pats pid rhs
-              (ConGroup n tag (MkPatClause pvars ps tid tm :: rest) :: gs) | ConMatch {newargs} lprf
+             pure [ConGroup tag [clause]]
+    addConG tag pargs pats pid rhs (g :: gs) with (checkGroupMatch (CName tag) pargs g)
+      addConG tag pargs pats pid rhs
+              (ConGroup tag (MkPatClause pvars ps tid tm :: rest) :: gs) | ConMatch {newargs} lprf
         = do let newps = newPats pargs lprf ps
              let l = mkSizeOf newargs
              let pats' = updatePatNames (updateNames (zip newargs pargs))
@@ -537,9 +540,9 @@ groupCons fc fn pvars (x :: xs) {isCons = p :: ps}
              let newclause = MkPatClause pvars (newps ++ pats') pid (weakenNs l rhs)
              -- put the new clause at the end of the group, since we
              -- match the clauses top to bottom.
-             pure $ ConGroup n tag (MkPatClause pvars ps tid tm :: rest ++ [newclause]) :: gs
-      addConG n tag pargs pats pid rhs (g :: gs) | NoMatch
-        = (g ::) <$> addConG n tag pargs pats pid rhs gs
+             pure $ ConGroup tag (MkPatClause pvars ps tid tm :: rest ++ [newclause]) :: gs
+      addConG tag pargs pats pid rhs (g :: gs) | NoMatch
+        = (g ::) <$> addConG tag pargs pats pid rhs gs
 
     -- This rather ugly special case is to deal with laziness, where Delay
     -- is like a constructor, but with a special meaning that it forces
@@ -604,14 +607,14 @@ groupCons fc fn pvars (x :: xs) {isCons = p :: ps}
          = addGroup p pprf pats pid (substName n (Local fc (Just True) idx pprf) rhs) acc
     addGroup (PCon cfc n t a pargs) pprf pats pid rhs acc
          = if a == length pargs
-              then addConG n t pargs pats pid rhs acc
+              then addConG (DConTag n t) pargs pats pid rhs acc
               else throw (CaseCompile cfc fn (NotFullyApplied n))
     addGroup (PTyCon cfc n a pargs) pprf pats pid rhs acc
          = if a == length pargs
-           then addConG n 0 pargs pats pid rhs acc
+           then addConG (TConTag n) pargs pats pid rhs acc
            else throw (CaseCompile cfc fn (NotFullyApplied n))
     addGroup (PArrow _ _ s t) pprf pats pid rhs acc
-         = addConG (UN $ Basic "->") 0 [s, t] pats pid rhs acc
+         = addConG (TConTag $ UN $ Basic "->") [s, t] pats pid rhs acc
     -- Go inside the delay; we'll flag the case as needing to force its
     -- scrutinee (need to check in 'caseGroups below)
     addGroup (PDelay _ _ pty parg) pprf pats pid rhs acc
@@ -880,10 +883,10 @@ mutual
   -- inspect next has a concrete type that is the same in all cases, and
   -- has the most distinct constructors (via pickNextViable)
   match {todo = _ :: _} fc fn phase clauses err
-      = do let nps = getNPs <$> clauses
+      = do let nps = clausePats <$> clauses
            let (_ ** (MkNVar next)) = nextIdxByScore (caseTreeHeuristics !getSession) phase nps
            let prioritizedClauses = shuffleVars next <$> clauses
-           (n ** MkNVar next') <- pickNextViable fc phase fn (getNPs <$> prioritizedClauses)
+           (n ** MkNVar next') <- pickNextViable fc phase fn (clausePats <$> prioritizedClauses)
            log "compile.casetree.pick" 25 $ "Picked " ++ show n ++ " as the next split"
            let clauses' = shuffleVars next' <$> prioritizedClauses
            log "compile.casetree.clauses" 25 $
@@ -910,10 +913,10 @@ mutual
     where
       altGroups : forall ne. List01 ne (Group todo vars) -> Core (List (CaseAlt vars))
       altGroups [] = pure $ toList $ DefaultCase <$> errorCase
-      altGroups (ConGroup {newargs} cn tag rest :: cs)
+      altGroups (ConGroup {newargs} tag rest :: cs)
           = do crest <- match fc fn phase rest (map (weakenNs (mkSizeOf newargs)) errorCase)
                cs' <- altGroups cs
-               pure (ConCase cn tag newargs crest :: cs')
+               pure (ConCase tag newargs crest :: cs')
       altGroups (DelayGroup {tyarg} {valarg} rest :: cs)
           = do crest <- match fc fn phase rest (map (weakenNs (mkSizeOf [tyarg, valarg])) errorCase)
                cs' <- altGroups cs
@@ -1141,7 +1144,7 @@ simpleCase fc phase fn ty clauses
 
 mutual
   findReachedAlts : CaseAlt ns' -> List Int
-  findReachedAlts (ConCase _ _ _ t) = findReached t
+  findReachedAlts (ConCase _ _ t) = findReached t
   findReachedAlts (DelayCase _ _ t) = findReached t
   findReachedAlts (ConstCase _ t) = findReached t
   findReachedAlts (DefaultCase t) = findReached t
@@ -1186,7 +1189,7 @@ identifyUnreachableDefaults fc defs nfty cs
 
     dropRep : List (CaseAlt vars) -> SortedSet Int -> (List (CaseAlt vars), SortedSet Int)
     dropRep [] extra = ([], extra)
-    dropRep (c@(ConCase n t args sc) :: rest) extra
+    dropRep (c@(ConCase t args sc) :: rest) extra
           -- assumption is that there's no defaultcase in 'rest' because
           -- we've just removed it
         = let (filteredClauses, extraCases) = partition (not . tagIs t) rest
@@ -1216,11 +1219,11 @@ findExtraDefaults fc defs (Case idx el ty altsIn)
        pure (Prelude.toList extraCases ++ extraCases')
   where
     findExtraAlts : CaseAlt vars -> Core (List Int)
-    findExtraAlts (ConCase x tag args ctree) = findExtraDefaults fc defs ctree
-    findExtraAlts (DelayCase x arg ctree) = findExtraDefaults fc defs ctree
-    findExtraAlts (ConstCase x ctree) = findExtraDefaults fc defs ctree
+    findExtraAlts (ConCase _ _ ctree) = findExtraDefaults fc defs ctree
+    findExtraAlts (DelayCase _ _ ctree) = findExtraDefaults fc defs ctree
+    findExtraAlts (ConstCase _ ctree) = findExtraDefaults fc defs ctree
     -- already handled defaults by elaborating them to all possible cons
-    findExtraAlts (DefaultCase ctree) = pure []
+    findExtraAlts (DefaultCase _) = pure []
 
 findExtraDefaults fc defs ctree = pure []
 
@@ -1254,6 +1257,9 @@ getPMDef fc phase fn ty clauses@(_ :: _)
            "Reached clauses: " ++ (show reached)
          extraDefaults <- findExtraDefaults fc defs t
          let unreachable = getUnreachable 0 (reached \\ extraDefaults) clauses
+         -- Should always return Just for a well-formed tree. TODO: prove it
+         let t = fromMaybe (Unmatched "Empty case tree for \{show fn}") (optimiseTree [] t)
+         log "compile.casetree.getpmdef" 20 $ "Optimised to: " ++ show !(toFullNames t)
          pure (_ ** (t, unreachable))
   where
     getUnreachable : Int -> List Int -> List Clause -> List Clause

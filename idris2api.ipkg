@@ -53,6 +53,7 @@ modules =
     Core.Case.CaseBuilder,
     Core.Case.CaseTree,
     Core.Case.CaseTree.Pretty,
+    Core.Case.Optimise,
     Core.Case.Util,
     Core.CompileExpr,
     Core.CompileExpr.Pretty,

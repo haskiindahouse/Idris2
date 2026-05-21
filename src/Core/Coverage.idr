@@ -151,7 +151,7 @@ isEmpty defs env _ = pure False
 altMatch : CaseAlt vars -> CaseAlt vars -> Bool
 altMatch _ (DefaultCase _) = True
 altMatch (DelayCase _ _ t) (DelayCase _ _ t') = True
-altMatch (ConCase n t _ _) (ConCase n' t' _ _) = t == t'
+altMatch (ConCase t _ _) (ConCase t' _ _) = t == t'
 altMatch (ConstCase c _) (ConstCase c' _) = c == c'
 altMatch _ _ = False
 
@@ -218,19 +218,19 @@ findTag v ((v', t) :: xs)
          else findTag v xs
 
 addNot : {idx, vars : _} ->
-         (0 p : IsVar n idx vars) -> Int -> KnownVars vars (List Int) ->
-         KnownVars vars (List Int)
+         (0 p : IsVar n idx vars) -> a -> KnownVars vars (List a) ->
+         KnownVars vars (List a)
 addNot v t [] = [(MkVar v, [t])]
 addNot v t ((v', ts) :: xs)
     = if MkVar v == v'
          then ((v', t :: ts) :: xs)
          else ((v', ts) :: addNot v t xs)
 
-tagIsNot : List Int -> CaseAlt vars -> Bool
-tagIsNot ts (ConCase _ t' _ _) = not (t' `elem` ts)
+tagIsNot : List ConTag -> CaseAlt vars -> Bool
+tagIsNot ts (ConCase t _ _) = not (t `elem` ts)
 tagIsNot ts (ConstCase {}) = True
 tagIsNot ts (DelayCase {}) = True
-tagIsNot ts (DefaultCase _) = False
+tagIsNot ts (DefaultCase {}) = False
 
 -- Replace a default case with explicit branches for the constructors.
 -- This is easier than checking whether a default is needed when traversing
@@ -255,7 +255,7 @@ replaceDefaults fc defs nfty cs
 
     dropRep : List (CaseAlt vars) -> List (CaseAlt vars)
     dropRep [] = []
-    dropRep (c@(ConCase n t args sc) :: rest)
+    dropRep (c@(ConCase t _ _) :: rest)
           -- assumption is that there's no defaultcase in 'rest' because
           -- we've just removed it
         = c :: dropRep (filter (not . tagIs t) rest)
@@ -268,12 +268,12 @@ replaceDefaults fc defs nfty cs
 buildArgs : {auto c : Ref Ctxt Defs} ->
             {vars : _} ->
             FC -> Defs ->
-            KnownVars vars Int -> -- Things which have definitely match
-            KnownVars vars (List Int) -> -- Things an argument *can't* be
-                                    -- (because a previous case matches)
+            KnownVars vars ConTag -> -- Things which have definitely match
+            KnownVars vars (List ConTag) -> -- Things an argument *can't* be
+                                            -- (because a previous case matches)
             List ClosedTerm -> -- ^ arguments, with explicit names
             CaseTree vars -> Core (List (List ClosedTerm))
-buildArgs fc defs known not ps cs@(Case {name = var} idx el ty altsIn)
+buildArgs fc defs known not ps cs@(Case idx el ty altsIn)
   -- If we've already matched on 'el' in this branch, restrict the alternatives
   -- to the tag we already know. Otherwise, add missing cases and filter out
   -- the ones it can't possibly be (the 'not') because a previous case
@@ -288,33 +288,35 @@ buildArgs fc defs known not ps cs@(Case {name = var} idx el ty altsIn)
                               (findTag el not)
          buildArgsAlt not altsN
   where
-    buildArgAlt : KnownVars vars (List Int) ->
+    buildArgAlt : KnownVars vars (List ConTag) ->
                   CaseAlt vars -> Core (List (List ClosedTerm))
-    buildArgAlt not' (ConCase n t args sc)
+    buildArgAlt not' (ConCase tag args sc)
         = do let l = mkSizeOf args
-             let con = Ref fc (DataCon t (size l)) n
-             let ps' = map (substName var
-                             (apply fc
-                                    con (map (Ref fc Bound) args))) ps
-             buildArgs fc defs (weakenNs l ((MkVar el, t) :: known))
+             let con = case tag of
+                            DConTag n t => Ref fc (DataCon t (size l)) n
+                            TConTag n => Ref fc (TyCon (size l)) n
+             let ps' = map (substName (nameAt el)
+                             (apply fc con (map (Ref fc Bound) args))) ps
+             buildArgs fc defs (weakenNs l ((MkVar el, tag) :: known))
                                (weakenNs l not') ps' sc
     buildArgAlt not' (DelayCase t a sc)
         = let l = mkSizeOf [t, a]
-              ps' = map (substName var (TDelay fc LUnknown
+              ps' = map (substName (nameAt el)
+                                   (TDelay fc LUnknown
                                              (Ref fc Bound t)
                                              (Ref fc Bound a))) ps in
               buildArgs fc defs (weakenNs l known) (weakenNs l not')
                                 ps' sc
     buildArgAlt not' (ConstCase c sc)
-        = do let ps' = map (substName var (PrimVal fc c)) ps
+        = do let ps' = map (substName (nameAt el) (PrimVal fc c)) ps
              buildArgs fc defs known not' ps' sc
     buildArgAlt not' (DefaultCase sc)
         = buildArgs fc defs known not' ps sc
 
-    buildArgsAlt : KnownVars vars (List Int) -> List (CaseAlt vars) ->
+    buildArgsAlt : KnownVars vars (List ConTag) -> List (CaseAlt vars) ->
                    Core (List (List ClosedTerm))
     buildArgsAlt not' [] = pure []
-    buildArgsAlt not' (c@(ConCase _ t _ _) :: cs)
+    buildArgsAlt not' (c@(ConCase t _ _) :: cs)
         = pure $ !(buildArgAlt not' c) ++
                  !(buildArgsAlt (addNot el t not') cs)
     buildArgsAlt not' (c :: cs)

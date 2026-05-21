@@ -6,24 +6,9 @@ Compile time tree: case {arg:4} of
   _ => case {arg:2} of
     Nil {e:1} => case {arg:4} of
       S {e:2} => {arg:3}
-      _ => case {arg:3} of
-        Nil {e:3} => case {arg:4} of
-          S {e:4} => {arg:2}
-          _ => case {arg:2} of
-            (::) {e:5} {e:6} {e:7} => case {arg:3} of
-              (::) {e:8} {e:9} {e:10} => case {arg:4} of
-                S {e:11} => {e:6} :: mergeLim {e:7} ({e:9} :: {e:10}) {e:11}
-        _ => case {arg:2} of
-          (::) {e:5} {e:6} {e:7} => case {arg:3} of
-            (::) {e:8} {e:9} {e:10} => case {arg:4} of
-              S {e:11} => {e:6} :: mergeLim {e:7} ({e:9} :: {e:10}) {e:11}
     _ => case {arg:3} of
       Nil {e:3} => case {arg:4} of
         S {e:4} => {arg:2}
-        _ => case {arg:2} of
-          (::) {e:5} {e:6} {e:7} => case {arg:3} of
-            (::) {e:8} {e:9} {e:10} => case {arg:4} of
-              S {e:11} => {e:6} :: mergeLim {e:7} ({e:9} :: {e:10}) {e:11}
       _ => case {arg:2} of
         (::) {e:5} {e:6} {e:7} => case {arg:3} of
           (::) {e:8} {e:9} {e:10} => case {arg:4} of
@@ -33,9 +18,9 @@ Inferrable args: [0]
 Compiled: \ {arg:2}, {arg:3}, {arg:4} => case {arg:4} of
   { 0 => {arg:2}
   ; _ => case {arg:2} of
-           { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { 0 => case {arg:3} of  { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { 0 => case {arg:2} of  { _builtin.CONS {tag = 1} [cons] {e:6} {e:7} => case {arg:3} of  { _builtin.CONS {tag = 1} [cons] {e:9} {e:10} => case {arg:4} of  { 0 => crash "Nat case not covered"; _ => let {e:11} = {arg:4} - 1 in_builtin.CONS {tag = 1} [cons] {e:6} (Main.mergeLim {e:7} (_builtin.CONS {tag = 1} [cons] {e:9} {e:10}) {e:11})}}}; _ => {arg:2}}; _ => case {arg:2} of  { _builtin.CONS {tag = 1} [cons] {e:6} {e:7} => case {arg:3} of  { _builtin.CONS {tag = 1} [cons] {e:9} {e:10} => case {arg:4} of  { 0 => crash "Nat case not covered"; _ => let {e:11} = {arg:4} - 1 in_builtin.CONS {tag = 1} [cons] {e:6} (Main.mergeLim {e:7} (_builtin.CONS {tag = 1} [cons] {e:9} {e:10}) {e:11})}}}}; _ => {arg:3}}
+           { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { 0 => crash "Nat case not covered"; _ => {arg:3}}
            ; _ => case {arg:3} of
-                    { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { 0 => case {arg:2} of  { _builtin.CONS {tag = 1} [cons] {e:6} {e:7} => case {arg:3} of  { _builtin.CONS {tag = 1} [cons] {e:9} {e:10} => case {arg:4} of  { 0 => crash "Nat case not covered"; _ => let {e:11} = {arg:4} - 1 in_builtin.CONS {tag = 1} [cons] {e:6} (Main.mergeLim {e:7} (_builtin.CONS {tag = 1} [cons] {e:9} {e:10}) {e:11})}}}; _ => {arg:2}}
+                    { _builtin.NIL {tag = 0} [nil] => case {arg:4} of  { 0 => crash "Nat case not covered"; _ => {arg:2}}
                     ; _ => case {arg:2} of
                              { _builtin.CONS {tag = 1} [cons] {e:6} {e:7} => case {arg:3} of  { _builtin.CONS {tag = 1} [cons] {e:9} {e:10} => case {arg:4} of  { 0 => crash "Nat case not covered"; _ => let {e:11} = {arg:4} - 1 in_builtin.CONS {tag = 1} [cons] {e:6} (Main.mergeLim {e:7} (_builtin.CONS {tag = 1} [cons] {e:9} {e:10}) {e:11})}}
                              }
@@ -69,24 +54,9 @@ Compile time tree: case {arg:4} of
   _ => case {arg:2} of
     Nil {e:1} => case {arg:4} of
       S {e:2} => {arg:3}
-      _ => case {arg:3} of
-        Nil {e:3} => case {arg:4} of
-          S {e:4} => {arg:2}
-          _ => case {arg:2} of
-            (::) {e:5} {e:6} {e:7} => case {arg:3} of
-              (::) {e:8} {e:9} {e:10} => case {arg:4} of
-                S {e:11} => {e:6} :: mergeLim {e:7} ({e:9} :: {e:10}) {e:11}
-        _ => case {arg:2} of
-          (::) {e:5} {e:6} {e:7} => case {arg:3} of
-            (::) {e:8} {e:9} {e:10} => case {arg:4} of
-              S {e:11} => {e:6} :: mergeLim {e:7} ({e:9} :: {e:10}) {e:11}
     _ => case {arg:3} of
       Nil {e:3} => case {arg:4} of
         S {e:4} => {arg:2}
-        _ => case {arg:2} of
-          (::) {e:5} {e:6} {e:7} => case {arg:3} of
-            (::) {e:8} {e:9} {e:10} => case {arg:4} of
-              S {e:11} => {e:6} :: mergeLim {e:7} ({e:9} :: {e:10}) {e:11}
       _ => case {arg:2} of
         (::) {e:5} {e:6} {e:7} => case {arg:3} of
           (::) {e:8} {e:9} {e:10} => case {arg:4} of
