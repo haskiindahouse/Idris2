@@ -128,6 +128,7 @@ knownTopics = [
     ("eval.def.underapplied", Just "Evaluating definitions (unavailable by default, edit Core.Normalise.Eval & recompile)"),
     ("eval.def.stuck", Just "Evaluating definitions (unavailable by default, edit Core.Normalise.Eval & recompile)"),
     ("eval.eta", Nothing),
+    ("eval.profile", Just "Per-step evaluator profile events (JSONL on stderr; enable with --log eval.profile:10)"),
     ("eval.ref", Just "Evaluating refs (unavailable by default, edit Core.Normalise.Eval & recompile)"),
     ("eval.stuck", Nothing),
     ("eval.stuck.outofscope", Nothing),
