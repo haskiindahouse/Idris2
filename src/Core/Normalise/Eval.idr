@@ -315,8 +315,8 @@ parameters (defs : Defs) (topopts : EvalOpts)
                    Just opts' <- updateLimit nt n topopts
                         | Nothing => do log "eval.stuck" 10 $ "Function \{show n} past reduction limit"
                                         pure def -- name is past reduction limit
-                   logC "eval.profile" 10 $ do n' <- toFullNames n
-                                               pure "{\"e\":\"ref\",\"n\":\"\{show n'}\",\"sk\":\{show (length stk)}}"
+                   logC "eval.stuck" 10 $ do n' <- toFullNames n
+                                             pure "{\"v\":1,\"e\":\"ref\",\"n\":\"\{show n'}\",\"sk\":\{show (length stk)}}"
                    nf <- evalDef env opts' meta fc
                            (multiplicity res) (definition res) (flags res) stk def
                    -- logC "eval.ref" 50 $ do n' <- toFullNames n
