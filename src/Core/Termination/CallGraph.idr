@@ -41,11 +41,16 @@ scEq : Value f vars -> Value f' vars -> Core Bool
 scEqSpine : Spine vars -> Spine vars -> Core Bool
 scEqSpine [<] [<] = pure True
 scEqSpine (sp :< x) (sp' :< y)
-    = do x' <- value x
-         y' <- value y
-         if !(scEq x' y')
-            then scEqSpine sp sp'
-            else pure False
+    -- erased (Rig0) spine args (e.g. type parameters) are irrelevant to
+    -- size-change, and may legitimately differ structurally (a concrete type
+    -- vs a pattern variable), so skip them when comparing for equality
+    = if isErased x.multiplicity
+         then scEqSpine sp sp'
+         else do x' <- value x
+                 y' <- value y
+                 if !(scEq x' y')
+                    then scEqSpine sp sp'
+                    else pure False
 scEqSpine _ _ = pure False
 
 -- Approximate equality between values. We don't go under binders - we're
