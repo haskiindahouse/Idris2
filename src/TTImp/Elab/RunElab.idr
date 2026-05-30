@@ -16,9 +16,12 @@ import Idris.REPL.Opts
 import Idris.Pretty
 import Idris.Syntax
 
+import Data.List
+import Data.Maybe
 import Data.SnocList
 
 import Libraries.Data.NameMap
+import Libraries.Data.NatSet
 import Libraries.Data.WithDefault
 import Libraries.Text.PrettyPrint.Prettyprinter.Doc -- for PageWidth
 import Libraries.Utils.Path
@@ -297,6 +300,53 @@ elabScript rig fc nest env script@(VDCon nfc nm t ar args) exp
                           let bty = binderType binder
                           scriptRet $ map rawName !(unelabUniqueBinders env bty)
                   _ => failWith defs $ show n ++ " is not a local variable"
+    elabCon defs "GetDecEqConPairs" [<_, x1]
+        = do VTCon _ tn _ _ <- expandFull x1
+               | _ => failWith defs "GetDecEqConPairs: argument is not a type constructor"
+             Just (TCon _ params _ _ _ mcons _) <- lookupDefExact tn (gamma defs)
+               | _ => failWith defs $ show tn ++ " is not a type constructor"
+             let cons = fromMaybe [] mcons
+             consInfo <- traverse mkConInfo cons
+             let allPairs = [ (x, y) | x <- consInfo, y <- consInfo, fst x /= fst y ]
+                              ++ map (\t => (t, t)) consInfo
+             vals <- traverse validatePair allPairs
+             scriptRet (NatSet.toList params, catMaybes vals)
+      where
+        getNFArgs : NF [<] -> Core (List (NF [<]))
+        getNFArgs (VBind _ _ (Pi _ _ _ _) sc)
+            = do res <- expandFull !(sc (pure (VErased EmptyFC Placeholder)))
+                 getNFArgs res
+        getNFArgs (VTCon _ _ _ sp)
+            = traverse (\se => expandFull !(se.value)) (toList sp)
+        getNFArgs _ = pure []
+
+        mkConInfo : Name -> Core (String, List (NF [<]))
+        mkConInfo cn
+            = do Just gdef <- lookupCtxtExact cn (gamma defs)
+                   | _ => pure (nameRoot cn, [])
+                 nfty <- expandFull !(nf [<] gdef.type)
+                 args <- getNFArgs nfty
+                 pure (nameRoot cn, args)
+
+        validateNFArg : (NF [<], NF [<]) -> Core Bool
+        validateNFArg (VPrimVal _ x, VPrimVal _ y) = pure (x == y)
+        validateNFArg (VDCon _ x _ _ xsp, VDCon _ y _ _ ysp)
+            = if x == y
+                 then do xs <- traverse (\se => expandFull !(se.value)) (toList xsp)
+                         ys <- traverse (\se => expandFull !(se.value)) (toList ysp)
+                         rs <- traverse validateNFArg (zip xs ys)
+                         pure (all id rs)
+                 else pure False
+        validateNFArg _ = pure True
+
+        validatePair : ((String, List (NF [<])), (String, List (NF [<]))) ->
+                       Core (Maybe (String, String))
+        validatePair ((nx, xargs), (ny, yargs))
+            = if nx == ny
+                 then pure (Just (nx, ny))
+                 else do rs <- traverse validateNFArg (zip xargs yargs)
+                         pure (if all id rs then Just (nx, ny) else Nothing)
+
     elabCon defs "GetCons" [<n]
         = do n' <- expandFull n
              cn <- reify defs n'
