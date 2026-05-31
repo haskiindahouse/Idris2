@@ -177,8 +177,15 @@ getLocalTerm fc env f [] = pure (f, [])
 getLocalTerm fc env f (a :: as)
     = case defined a env of
            Just (MkIsDefined rigb lv) =>
-                do (tm, vs) <- getLocalTerm fc env
-                                   (App fc f rigb (Local fc Nothing _ lv)) as
+                -- The nested function's captured arguments were lifted with
+                -- 'eraseLinear' (see 'localHelper'), so linear environment
+                -- variables become erased parameters. Match that here: apply
+                -- such arguments at multiplicity 0, otherwise a captured linear
+                -- variable is counted as used by both the capture and any
+                -- explicit use, breaking case-branch usage consistency.
+                do let rigb' = if isLinear rigb then erased else rigb
+                   (tm, vs) <- getLocalTerm fc env
+                                   (App fc f rigb' (Local fc Nothing _ lv)) as
                    pure (tm, MkVar lv :: vs)
            Nothing => throw (InternalError "Case Local failed")
 
