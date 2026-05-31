@@ -1176,8 +1176,64 @@ mutual
       = do cs <- unify (lower mode) fc env vx vy
            cs' <- unifySpine (lower mode) fc env spx spy
            pure (union cs cs')
-  unifyNotMetavar mode fc env x@(VCase{}) y@(VCase{})
-      = unifyIfEq True fc mode env (asGlued x) (asGlued y)
+  unifyNotMetavar mode fc env x@(VCase _ _ _ scx tyx altsx) y@(VCase _ _ _ scy tyy altsy)
+      -- If the two case trees have the same shape (same alternatives, in the
+      -- same order, with matching constructors/arities), decompose into
+      -- unifying the scrutinees and the corresponding right-hand sides. This
+      -- mirrors how 'convNF' compares case trees, and lets us solve a
+      -- metavariable that only appears inside a stuck case (e.g. inferring 'c'
+      -- in 'min a c' which reduces to 'case (compare a c == LT) of ...').
+      -- Different-shaped cases fall back to the previous convert-or-postpone.
+      = if compatAlts altsx altsy
+           then do csc <- unify (lower mode) fc env (asGlued scx) (asGlued scy)
+                   cty <- unify (lower mode) fc env tyx tyy
+                   cas <- unifyAlts altsx altsy
+                   pure (union csc (union cty cas))
+           else unifyIfEq True fc mode env (asGlued x) (asGlued y)
+    where
+      compatAlt : VCaseAlt vars -> VCaseAlt vars -> Bool
+      compatAlt (VConCase _ _ t a _) (VConCase _ _ t' a' _) = t == t' && length a == length a'
+      compatAlt (VDelayCase _ _ _ _) (VDelayCase _ _ _ _)   = True
+      compatAlt (VConstCase _ c _)   (VConstCase _ c' _)    = c == c'
+      compatAlt (VDefaultCase _ _)   (VDefaultCase _ _)     = True
+      compatAlt _ _ = False
+
+      compatAlts : List (VCaseAlt vars) -> List (VCaseAlt vars) -> Bool
+      compatAlts [] [] = True
+      compatAlts (a :: as) (b :: bs) = compatAlt a b && compatAlts as bs
+      compatAlts _ _ = False
+
+      unifyScope : (args : SnocList (RigCount, Name)) -> VCaseScope args vars ->
+                   (args' : SnocList (RigCount, Name)) -> VCaseScope args' vars ->
+                   Core UnifyResult
+      unifyScope [<] sc [<] sc'
+          = do (_, rx) <- sc
+               (_, ry) <- sc'
+               unify (lower mode) fc env rx ry
+      unifyScope (xs :< _) sc (ys :< _) sc'
+          = do n <- genVarName "c"
+               unifyScope xs (sc (mkArg fc n)) ys (sc' (mkArg fc n))
+      unifyScope _ _ _ _ = pure success
+
+      unifyAlt : VCaseAlt vars -> VCaseAlt vars -> Core UnifyResult
+      unifyAlt (VConCase _ _ _ a sc) (VConCase _ _ _ a' sc') = unifyScope a sc a' sc'
+      unifyAlt (VDelayCase _ _ _ sc) (VDelayCase _ _ _ sc')
+          = do tn <- genVarName "t"
+               an <- genVarName "a"
+               (_, rx) <- sc (mkArg fc tn) (mkArg fc an)
+               (_, ry) <- sc' (mkArg fc tn) (mkArg fc an)
+               unify (lower mode) fc env rx ry
+      unifyAlt (VConstCase _ _ x) (VConstCase _ _ y) = unify (lower mode) fc env x y
+      unifyAlt (VDefaultCase _ x) (VDefaultCase _ y)  = unify (lower mode) fc env x y
+      unifyAlt _ _ = pure success
+
+      unifyAlts : List (VCaseAlt vars) -> List (VCaseAlt vars) -> Core UnifyResult
+      unifyAlts [] [] = pure success
+      unifyAlts (a :: as) (b :: bs)
+          = do c <- unifyAlt a b
+               cs <- unifyAlts as bs
+               pure (union c cs)
+      unifyAlts _ _ = pure success
   unifyNotMetavar mode fc env x@(VApp{}) y
       -- conversion check first, in case app is a blocked case
       = do logC "unify" 20 $ do
