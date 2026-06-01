@@ -487,7 +487,7 @@ mutual
   findSCalt g eqs args var (VDelayCase fc ty arg tm)
       = do targ <- nextVar
            varg <- nextVar
-           let pat = VDelay fc LUnknown varg targ
+           let pat = VDelay fc LUnknown targ varg
            (eqs, rhs) <- tm (pure targ) (pure varg)
            logDepth $ findSC g eqs !(expandForced eqs
                        !(maybe (pure args)
