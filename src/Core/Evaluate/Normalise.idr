@@ -1,6 +1,7 @@
 module Core.Evaluate.Normalise
 
 import Core.Core
+import Data.IORef
 import Core.Context
 import Core.Context.Log
 import Core.Env
@@ -34,6 +35,18 @@ Show EvalFlags where
   show (Holes HolesAll) = "HolesAll"
   show (Holes HolesArgs) = "HolesArgs"
 
+memoise : Core a -> Core (Core a)
+memoise act
+    = do ref <- coreLift (newIORef Nothing)
+         pure $ do Just v <- coreLift (readIORef ref)
+                     | Nothing => do v <- act
+                                     coreLift (writeIORef ref (Just v))
+                                     pure v
+                   pure v
+
+mkVAppM : (Core (Maybe (Glued vars)) -> Value f vars) -> Core (Maybe (Glued vars)) -> Core (Value f vars)
+mkVAppM con thunk = con <$> memoise thunk
+
 export
 apply : FC -> Value f vars -> RigCount -> Core (Glued vars) -> Core (Glued vars)
 apply fc (VBind _ _ (Lam _ _ _ _) sc) _ arg = sc arg
@@ -42,7 +55,7 @@ apply fc (VBind bfc x (Let lfc c val ty) sc) q arg
     = pure $ VBind bfc x (Let lfc c val ty)
                    (\val' => apply fc !(sc val') q arg)
 apply fc (VApp afc nt n spine go) q arg
-    = pure $ VApp afc nt n (spine :< MkSpineEntry fc q arg) $
+    = mkVAppM (VApp afc nt n (spine :< MkSpineEntry fc q arg)) $
            do Just go' <- go
                    | Nothing => pure Nothing
               res <- apply fc go' q arg
@@ -407,7 +420,7 @@ parameters {auto c : Ref Ctxt Defs} (eflags : EvalFlags)
               else do logC "eval.def.stuck" 50 $ do
                         def <- toFullNames def
                         pure "Refusing to reduce Ref: n: \{show !(toFullNames n)}, def: \{show $ definition def}"
-                      pure $ VApp fc nt n [<] $
+                      mkVAppM (VApp fc nt n [<]) $
                           do logC "eval.def.stuck" 50 $ pure "Attempt to reduce refused previously Ref: n: \{show !(toFullNames n)}, tree: \{show !(toFullNames fn)}"
                              res <- eval locs env (embed fn)
                              logC "eval.def.stuck" 50 $ pure "Attempt to reduce refused previously Ref: res \{show !(toFullNames res)}"
