@@ -13,14 +13,12 @@ Refers to (runtime): _builtin.CONS, _builtin.NIL, Main.view, Main.idL
 Flags: covering
 Size change:
   Prelude.Basics.Nil:
-    l 0 1 2
-  r +------
-  0 | = < <
+    l
+  r +
   Prelude.Basics.(::):
     l 0 1 2
   r +------
-  0 | = < <
-  1 |   < <
+  0 |   < <
   Main.idL:
     l 0 1 2
   r +------

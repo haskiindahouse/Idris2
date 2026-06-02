@@ -9,6 +9,7 @@ import Core.Evaluate
 import Core.Name.CompatibleVars
 
 import Data.String
+import Data.List
 import Data.SnocList.Quantifiers
 
 import Libraries.Data.SnocList.SizeOf
@@ -99,6 +100,10 @@ scEq' (VType _ _) (VType _ _) = pure True
 scEq' _ _ = pure False -- other cases not checkable
 
 scEq x y = scEq' !(dropLazy x) !(dropLazy y)
+
+dropErasedSp : Spine vars -> Spine vars
+dropErasedSp [<] = [<]
+dropErasedSp (sp :< e) = if isErased e.multiplicity then dropErasedSp sp else dropErasedSp sp :< e
 
 data Guardedness = Toplevel | Unguarded | Guarded | InDelay
 
@@ -380,7 +385,7 @@ mutual
                 -- arguments
                 InDelay => findSCspine Unguarded eqs args sp
                 _ => do fn_args <- traverseSnocList value sp
-                        findSCcall Unguarded eqs args fc fn (cast fn_args)
+                        findSCcall Unguarded eqs args fc fn (cast fn_args) (cast (map (\e => isErased e.multiplicity) sp))
     where
       isAssertTotal : Name -> Bool
       isAssertTotal = (== NS builtinNS (UN $ Basic "assert_total"))
@@ -421,10 +426,10 @@ mutual
       = findSCspine InDelay eqs pats sp
   findSCapp Guarded eqs pats (VDCon fc n t a sp)
       = do defs <- get Ctxt
-           findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value sp))
+           findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value (dropErasedSp sp))) (toList (map (\e => isErased e.multiplicity) (dropErasedSp sp)))
   findSCapp Toplevel eqs pats (VDCon fc n t a sp)
       = do defs <- get Ctxt
-           findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value sp))
+           findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value (dropErasedSp sp))) (toList (map (\e => isErased e.multiplicity) (dropErasedSp sp)))
   findSCapp g eqs pats tm = pure [] -- not an application (TODO: VTCon)
 
 
@@ -546,8 +551,9 @@ mutual
                ForcedEqs ->
                List (Nat, Glued [<]) ->
                FC -> Name -> List (Glued [<]) ->
+               List Bool ->
                Core (List SCCall)
-  findSCcall g eqs pats fc fn_in args
+  findSCcall g eqs pats fc fn_in args margs
           -- Under 'assert_total' we assume that all calls are fine, so leave
           -- the size change list empty
         = do args <- traverse (canonicalise eqs) args
@@ -560,7 +566,7 @@ mutual
                                 pure (n, !(toFullNames !(quote [<] t)))) pats
                     targs <- traverse (\t => toFullNames !(quote [<] t)) args
                     pure ("Under " ++ show under ++ "\n" ++ "Args " ++ show targs)
-             scs <- traverse (\x => logDepth $ findSC g eqs pats x) args
+             scs <- traverse (\ (er, x) => if er then pure [] else logDepth $ findSC g eqs pats x) (zip margs args)
              pure ([MkSCCall fn
                    (fromListList
                         !(traverse (mkChange eqs aSmaller pats) args))
