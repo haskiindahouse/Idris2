@@ -55,27 +55,33 @@ apply fc (VBind bfc x (Let lfc c val ty) sc) q arg
     = pure $ VBind bfc x (Let lfc c val ty)
                    (\val' => apply fc !(sc val') q arg)
 apply fc (VApp afc nt n spine go) q arg
-    = mkVAppM (VApp afc nt n (spine :< MkSpineEntry fc q arg)) $
+    = do arg' <- memoise arg
+         mkVAppM (VApp afc nt n (spine :< MkSpineEntry fc q arg')) $
            do Just go' <- go
                    | Nothing => pure Nothing
-              res <- apply fc go' q arg
+              res <- apply fc go' q arg'
               pure (Just res)
 apply fc (VLocal lfc idx p spine) q arg
-    = pure $ VLocal lfc idx p (spine :< MkSpineEntry fc q arg)
+    = do arg' <- memoise arg
+         pure $ VLocal lfc idx p (spine :< MkSpineEntry fc q arg')
 apply fc (VMeta mfc n i sc spine go) q arg
-    = pure $ VMeta mfc n i sc (spine :< MkSpineEntry fc q arg) $
+    = do arg' <- memoise arg
+         pure $ VMeta mfc n i sc (spine :< MkSpineEntry fc q arg') $
            do Just go' <- go
                    | Nothing => pure Nothing
-              res <- apply fc go' q arg
+              res <- apply fc go' q arg'
               pure (Just res)
 apply fc (VDCon dfc n t a spine) q arg
-    = pure $ VDCon dfc n t a (spine :< MkSpineEntry fc q arg)
+    = do arg' <- memoise arg
+         pure $ VDCon dfc n t a (spine :< MkSpineEntry fc q arg')
 apply fc (VTCon tfc n a spine) q arg
-    = pure $ VTCon tfc n a (spine :< MkSpineEntry fc q arg)
+    = do arg' <- memoise arg
+         pure $ VTCon tfc n a (spine :< MkSpineEntry fc q arg')
 apply fc (VAs _ _ _ pat) q arg
     = apply fc pat q arg -- doesn't really make sense to keep the name
 apply fc (VForce ffc r v spine) q arg
-    = pure $ VForce ffc r v (spine :< MkSpineEntry fc q arg)
+    = do arg' <- memoise arg
+         pure $ VForce ffc r v (spine :< MkSpineEntry fc q arg')
 apply fc (VCase cfc t r sc ty alts) q arg
     = pure $ VCase cfc t r sc ty !(traverse (applyAlt arg) alts)
   where
