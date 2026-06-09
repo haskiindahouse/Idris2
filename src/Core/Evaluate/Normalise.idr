@@ -37,11 +37,11 @@ Show EvalFlags where
 
 memoise : Core a -> Core (Core a)
 memoise act
-    = do ref <- coreLift (newIORef Nothing)
-         pure $ do Just v <- coreLift (readIORef ref)
-                     | Nothing => do v <- act
-                                     coreLift (writeIORef ref (Just v))
-                                     pure v
+    = do ref <- coreLift (newIORef (Left act))
+         pure $ do Left a <- coreLift (readIORef ref)
+                     | Right v => pure v
+                   v <- a
+                   coreLift (writeIORef ref (Right v))
                    pure v
 
 mkVAppM : (Core (Maybe (Glued vars)) -> Value f vars) -> Core (Maybe (Glued vars)) -> Core (Value f vars)
