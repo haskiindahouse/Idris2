@@ -22,6 +22,11 @@ data Strategy
              -- in a namespace where the definition is visible
   | BlockApp -- block all applications. This is for when we've gone under a
              -- case so applications will be stuck
+  | Quick    -- no-unfold first pass (smalltt-style): like BlockApp, but
+             -- NOTHING may be unfolded (no definitions, no metavariable
+             -- solutions, no case-block expansion). True is a sound
+             -- confirmation; False just means "don't know" and every caller
+             -- MUST fall back to an unfolding strategy.
 
 genName : Ref QVar Int => String -> Core Name
 genName n
@@ -70,10 +75,13 @@ parameters {auto c : Ref Ctxt Defs}
   convertAppsNF s env x@(VApp _ nt n args _) y@(VApp _ nt' n' args' _)
       = if n == n'
            then convSpine s env args args'
-           else do x'@(VCase{}) <- expandApps x | _ => pure False
-                   y'@(VCase{}) <- expandApps y | _ => pure False
-                   -- See if the case blocks convert
-                   convGen s env x' y'
+           else case s of
+                  -- no-unfold first pass: refute, the caller falls back
+                  Quick => pure False
+                  _ => do x'@(VCase{}) <- expandApps x | _ => pure False
+                          y'@(VCase{}) <- expandApps y | _ => pure False
+                          -- See if the case blocks convert
+                          convGen s env x' y'
   convertAppsNF s env (VApp{}) (VMeta{}) = pure False
   convertAppsNF s env (VMeta{}) (VApp{}) = pure False
   -- Expanded into something else, so we've made progress, so back to the top
@@ -91,11 +99,15 @@ parameters {auto c : Ref Ctxt Defs}
       = if n == n'
            then convSpine BlockApp env args args'
            else pure False
+  convertApps Quick env _ _ n args _ _ _ n' args' _
+      = if n == n'
+           then convSpine Quick env args args'
+           else pure False
   convertApps s env fc nt n args x fn' nt' n' args' y
       = -- If n == n' we can try to save work by just checking arguments
         if n == n'
            -- Otherwise, convert the values (val and val')
-           then do False <- convSpine BlockApp env args args'
+           then do False <- convSpine Quick env args args'
                             -- Check without reducing first since it might save a lot of work
                             -- on success
                        | True => pure True
@@ -148,9 +160,12 @@ parameters {auto c : Ref Ctxt Defs}
            then convSpine s env sp sp'
            else pure False
   convNF {vars} s env x@(VMeta _ _ i sc args val) y@(VMeta _ _ i' sc' args' val')
-      = do Just x <- val  | Nothing => convMeta
-           Just y <- val' | Nothing => convMeta
-           convGen s env !(expand x) !(expand y)
+      = case s of
+          -- no-unfold first pass: never force the solutions
+          Quick => convMeta
+          _ => do Just x <- val  | Nothing => convMeta
+                  Just y <- val' | Nothing => convMeta
+                  convGen s env !(expand x) !(expand y)
     where
       convScope : List (RigCount, Core (Glued vars)) ->
                   List (RigCount, Core (Glued vars)) -> Core Bool
@@ -265,6 +280,12 @@ parameters {auto c : Ref Ctxt Defs}
 
   convGen s env x@(VApp fc nt n args val) y@(VApp fc' nt' n' args' val')
       = convertApps s env fc nt n args x fc' nt' n' args' y
+  -- Quick (no-unfold first pass): compare values as they are, expanding
+  -- nothing. An unexpanded application against anything else is "do not
+  -- know" (False) and the caller falls back to an unfolding strategy.
+  -- believe_me justified as in Core.Evaluate.Expand: Form is a phantom
+  -- index and we deliberately skip expansion here.
+  convGen Quick env x y = convNF Quick env (believe_me x) (believe_me y)
   convGen s env x y = convNF s env !(expand x) !(expand y)
 
   namespace Value
