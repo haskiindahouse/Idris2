@@ -245,7 +245,12 @@ substNameInVal n rep (VDCon fc cn t a sp)
     substNameInSpine [<] = pure [<]
     substNameInSpine (rest :< MkSpineEntry fc c arg)
         = do rest' <- substNameInSpine rest
-             pure (rest' :< MkSpineEntry fc c (substNameInVal n rep !arg))
+             -- strict: compute the substituted argument now instead of
+             -- stacking a pending-substitution thunk per refinement level
+             -- (with deep patterns the stacked layers made every force
+             -- re-run the whole stack: part of the ~n^4.5 getSC cliff)
+             arg' <- substNameInVal n rep !arg
+             pure (rest' :< MkSpineEntry fc c (pure arg'))
 substNameInVal n rep (VDelay fc r t v)
     = pure $ VDelay fc r !(substNameInVal n rep t) !(substNameInVal n rep v)
 substNameInVal n rep tm = pure tm
@@ -253,12 +258,17 @@ substNameInVal n rep tm = pure tm
 replaceInArgs : Name -> Glued [<] ->
                 List (Nat, Glued [<]) -> Core (List (Nat, Glued [<]))
 replaceInArgs v tm [] = pure []
--- -- Don't copy if there's no substitution done!
+-- REPLACE the entry with its refined form rather than appending a refined
+-- copy: appending grew the pattern list by one entry per case level, which
+-- (together with re-scanning and re-comparing every entry per level) made
+-- getSC ~n^4.5 in pattern depth — a 'foo 1000 = ()' literal pattern took
+-- hours. The relation the stale entry used to provide (RHS call args that
+-- still mention the pre-split variable) is preserved instead by recording
+-- the split as a forced equation (see findSCscope/findSCalt/Let-As below):
+-- findSCcall canonicalises call arguments with those equations, so they are
+-- compared in the same refined view as the (replaced) pattern entries.
 replaceInArgs v tm ((n, arg) :: args)
-    = do arg' <- substNameInVal v tm arg
-         if !(scEq arg arg')
-            then pure $ (n, arg) :: !(replaceInArgs v tm args)
-            else pure $ (n, arg) :: (n, arg') :: !(replaceInArgs v tm args)
+    = pure $ (n, !(substNameInVal v tm arg)) :: !(replaceInArgs v tm args)
 
 expandForced : List (Glued [<], Glued [<]) ->
                List (Nat, Glued [<]) -> Core (List (Nat, Glued [<]))
@@ -306,13 +316,121 @@ canonicalise eqs (VDCon fc cn t a sp)
     canonSp [<] = pure [<]
     canonSp (rest :< MkSpineEntry fc c arg)
         = do rest' <- canonSp rest
-             pure (rest' :< MkSpineEntry fc c (canonicalise eqs !arg))
+             -- strict, for the same reason as substNameInSpine
+             arg' <- canonicalise eqs !arg
+             pure (rest' :< MkSpineEntry fc c (pure arg'))
 -- for matching on types, convert to the form the case tree builder uses
 canonicalise eqs (VPrimVal fc (PrT c))
     = pure $ (VTCon fc (UN (Basic $ show c)) 0 [<])
 canonicalise eqs (VType fc _)
     = pure $ (VTCon fc (UN (Basic "Type")) 0 [<])
+-- canonicalisation is the only refinement mechanism for pattern views now,
+-- so it must see through laziness like the old entry substitution did:
+-- refine under Delay, and collapse Force(Delay x) (e.g. an as-pattern over
+-- a Lazy field shows up as %Force of the delayed variable)
+canonicalise eqs (VDelay fc r t v)
+    = pure $ VDelay fc r !(canonicalise eqs t) !(canonicalise eqs v)
+canonicalise eqs (VForce fc r v [<])
+    = do v' <- canonicalise eqs v
+         case v' of
+           VDelay _ _ _ val => pure val
+           _ => pure $ VForce fc r v' [<]
 canonicalise eqs val = pure val
+
+-- Match a constructor pattern whose leaves are fresh pattern variables
+-- against an existing refined view of the same value, yielding equations
+-- binding those fresh variables to the corresponding subterms of the view.
+-- Used when a case tree re-examines an already-refined variable (clause
+-- RHS duplication does this), see recordSplit. On constructor clash
+-- (unreachable branch) no equations are produced.
+matchPat : Glued [<] -> Glued [<] -> Core ForcedEqs
+matchPat p (VAs _ _ _ t) = matchPat p t
+matchPat p@(VApp _ Bound (MN _ _) [<] _) t = pure [(p, t)]
+-- symmetric case: the existing view is still an unrefined variable where the
+-- new pattern/reconstruction is deeper: refine the view var (the old entry
+-- substitution materialised this refinement into the entry list)
+matchPat p t@(VApp _ Bound (MN _ _) [<] _) = pure [(t, p)]
+matchPat (VDCon _ _ t a sp) (VDCon _ _ t' a' sp')
+    = if t == t' && length sp == length sp'
+         then matchSp sp sp'
+         else pure []
+  where
+    matchSp : Spine [<] -> Spine [<] -> Core ForcedEqs
+    matchSp [<] [<] = pure []
+    matchSp (sp :< e) (sp' :< e')
+        = do rest <- matchSp sp sp'
+             ms <- matchPat !(value e) !(value e')
+             pure (ms ++ rest)
+    matchSp _ _ = pure []
+matchPat (VDelay _ _ t v) (VDelay _ _ t' v')
+    = pure (!(matchPat t t') ++ !(matchPat v v'))
+matchPat _ _ = pure []
+
+-- Record a case split (v = pat) in the forced-equation list, so that call
+-- arguments mentioning v (or pat's fresh pattern variables) canonicalise to
+-- the refined pattern view: this replaces the old stale-entry mechanism
+-- (replaceInArgs used to append the refined entry, keeping the pre-split
+-- one). On the FIRST split of v, record (v -> pat). If v already has a
+-- refined view (the tree re-examines an already-split variable), do NOT
+-- shadow it: bind pat's fresh pattern variables against the existing view
+-- instead, so the new names canonicalise into the already-refined form.
+recordSplit : Name -> Glued [<] -> ForcedEqs -> List (Nat, Glued [<]) ->
+              Core (ForcedEqs, List (Nat, Glued [<]))
+
+-- Merge a scope-yielded forced-equality list (dotted/forced matches) into
+-- the accumulated equations. Plain (eqsc ++ eqs) let a clause-RHS-duplicate
+-- scope re-match SHADOW an already-refined variable with a shallow
+-- reconstruction (fresh unrefined vars), losing relations the old
+-- materialised-entry mechanism kept (deptycheck Gen <**> with-block SCC:
+-- weak duplicate edges broke SCT). Route var-headed equalities through
+-- recordSplit: first binding is recorded on the canonical var, re-bindings
+-- are matched against the existing view instead of shadowing it.
+mergeEqs : ForcedEqs -> ForcedEqs -> List (Nat, Glued [<]) ->
+           Core (ForcedEqs, List (Nat, Glued [<]))
+
+-- Append `pat` as an ADDITIONAL entry copy for every pattern-entry position
+-- whose stored value is exactly the variable v. Used when a value is
+-- RE-matched (clause-RHS duplication walks the same RHS under several case
+-- paths): the new pattern view can be structurally unrelated to the already
+-- recorded view of v (a different clause's shape), so a single canonical
+-- view cannot carry both — the old materialised-entry mechanism kept every
+-- refined copy and took relations from whichever view matched. Bounded by
+-- re-match events (NOT pattern depth: a first split of v sees a bare
+-- canonical view and only records an equation), so the deep-pattern cliff
+-- fix is unaffected.
+addEntryCopies : Name -> Glued [<] -> List (Nat, Glued [<]) -> List (Nat, Glued [<])
+addEntryCopies v pat [] = []
+addEntryCopies v pat ((n, e) :: rest)
+    = case e of
+        VApp _ Bound v' [<] _ =>
+          if v' == v
+             then (n, e) :: (n, pat) :: addEntryCopies v pat rest
+             else (n, e) :: addEntryCopies v pat rest
+        _ => (n, e) :: addEntryCopies v pat rest
+
+recordSplit v pat eqs args
+    = do cur <- canonicalise eqs (vRef EmptyFC Bound v)
+         case cur of
+           -- key the eq on the CANONICAL var (the alias-chain end), not on v:
+           -- when a case tree re-splits an already-split value (clause RHS
+           -- duplication), the new scrutinee var is an alias of the original
+           -- (matchPat records new->old); keying on v would leave the OLD var
+           -- (the one existing pattern views still mention) unbound, so those
+           -- views would dead-end un-refined (e.g. a re-forced lazy tail stuck
+           -- at %Delay v: deptycheck positive-nat pickWeighted false not-total).
+           -- cur is canonical, hence eq-free: prepending cannot shadow.
+           VApp _ Bound _ [<] _ => pure (((cur, pat) :: eqs), args)
+           -- re-match: bind the new pattern's fresh leaves against the
+           -- existing view, and keep the new view available as an extra
+           -- entry copy (see addEntryCopies)
+           _ => pure ((!(matchPat pat cur) ++ eqs), addEntryCopies v pat args)
+
+mergeEqs [] eqs args = pure (eqs, args)
+mergeEqs ((l, r) :: rest) eqs args
+    = do (eqs', args') <- mergeEqs rest eqs args
+         case l of
+           VApp _ Bound n [<] _ => recordSplit n r eqs' args'
+           _ => pure (((l, r) :: eqs'), args')
 
 mutual
   findSC : {auto c : Ref Ctxt Defs} ->
@@ -330,10 +448,13 @@ mutual
   findSC g eqs args (VBind _ _ (Lam _ _ _ _) sc)
       = findSC g eqs args !(sc nextVar)
   findSC g eqs args (VBind _ _ (Let _ erased (VAs _ UseRight (VApp _ Bound n [<] _) as) _) sc)
-      = do args' <- replaceInArgs n as args
+      = do -- record the alias as an equation: comparisons canonicalise both
+           -- call arguments and pattern entries through eqs (see mkChange),
+           -- which replaces the old materialised stale-entry mechanism
+           (eqs', args') <- recordSplit n as eqs args
            -- No mix the following: $ !(findSC g eqs args as) ++ !(findSC g eqs args' !(sc nextVar))
            -- because `as` came from erased, so, no actual structural decrease
-           findSC g eqs args' !(sc nextVar)
+           findSC g eqs' args' !(sc nextVar)
   findSC g eqs args (VBind fc n b sc)
       = do v <- nextVar
            pure $ !(findSCbinder b) ++ !(findSC g eqs args !(sc (pure v)))
@@ -466,23 +587,23 @@ mutual
                               pure (!(toFullNames !(quote [<] gx)),
                                     !(toFullNames !(quote [<] gy)))) eqs
                   pure ("Force equalities eqsc=\{show tms}, eqs=\{show teqs}"))
-          let eqs' = eqsc ++ eqs
+          (eqs', argsm) <- mergeEqs eqsc eqs args
           logC "totality.termination.sizechange" 10 $ do
             pat <- toFullNames !(quote [<] pat)
             pure "findSCscope replaceInArgs for var=\{show !(toFullNames var)}, pat=\{show pat}"
           logC "totality.termination.sizechange" 10 $ do
             args <- traverse (\ (a, b) => pure (a, !(toFullNames !(quote [<] b)))) args
             pure "findSCscope replaceInArgs for args=\{show args}"
-          args' <- maybe (pure args) (\v => replaceInArgs v pat args) var
-          logC "totality.termination.sizechange" 10 $ do
-            args' <- traverse (\ (a, b) => pure (a, !(toFullNames !(quote [<] b)))) args'
-            pure "findSCscope replaceInArgs for arg'=\{show args'}"
-          args'' <- traverse (\ (n, arg) => pure (n, !(canonicalise eqs' arg))) args'
-          logC "totality.termination.sizechange" 10 $ do
-            args'' <- traverse (\ (a, b) => pure (a, !(toFullNames !(quote [<] b)))) args''
-            pure "findSCscope replaceInArgs for args''=\{show args''}"
+          -- Record the split as an equation. Pattern entries stay as the
+          -- ORIGINAL argument variables for the whole walk; comparisons
+          -- canonicalise entries and call arguments through eqs on demand
+          -- (mkChange/findSCcall/asserted). This replaces the old mechanism
+          -- of materialising refined copies into the entry list, which grew
+          -- one stale entry per case level and made getSC ~n^4.5 in pattern
+          -- depth (a 'foo 1000 = ()' literal pattern took hours).
+          (eqs'', args'') <- maybe (pure (eqs', argsm)) (\v => recordSplit v pat eqs' argsm) var
           logNF "totality.termination.sizechange" 10 "RHS var=\{show !(toFullNames var)}" [<] rhs
-          logDepth $ findSC g eqs' args'' rhs
+          logDepth $ findSC g eqs'' args'' rhs
   findSCscope g eqs args var fc pat (cargs :< (c, xn)) sc
      = do varg <- nextVar
           pat' <- the (Core (Glued [<])) $ case pat of
@@ -508,15 +629,18 @@ mutual
       = do targ <- nextVar
            varg <- nextVar
            let pat = VDelay fc LUnknown varg targ
-           (eqs, rhs) <- tm (pure targ) (pure varg)
-           logDepth $ findSC g eqs !(expandForced eqs
-                       !(maybe (pure args)
-                               (\v => replaceInArgs v pat args) var))
-                    rhs
+           (eqsc, rhs) <- tm (pure targ) (pure varg)
+           -- record the split equation (see findSCscope). NOTE: thread the
+           -- outer eqs through (the old code dropped them here); equations
+           -- are now the only carrier of pattern refinement, so dropping
+           -- them loses every relation established before a Delay split
+           (eqs0, args0) <- mergeEqs eqsc eqs args
+           (eqs', args') <- maybe (pure (eqs0, args0)) (\v => recordSplit v pat eqs0 args0) var
+           logDepth $ findSC g eqs' args' rhs
   findSCalt g eqs args var (VConstCase fc c tm)
-      = logDepth $ findSC g eqs !(maybe (pure args)
-                         (\v => replaceInArgs v (VPrimVal fc c) args) var)
-                 tm
+      = do -- record the split equation (see findSCscope)
+           (eqs', args') <- maybe (pure (eqs, args)) (\v => recordSplit v (VPrimVal fc c) eqs args) var
+           logDepth $ findSC g eqs' args' tm
   findSCalt g eqs args _ (VDefaultCase fc tm) = logDepth $ findSC g eqs args tm
 
 
@@ -613,7 +737,11 @@ mutual
   mkChange eqs aSmaller pats arg
     = do defs <- get Ctxt
          let fuel = defs.options.elabDirectives.totalLimit
-         res <- traverse (\(n, p) => pure (n, !(plusLazy (sizeCompareAsserted fuel !(asserted eqs aSmaller arg) p) (sizeCompare fuel arg p)))) pats
+         res <- traverse (\(n, p) =>
+                  do -- entries are the original argument variables: bring
+                     -- them to the current refined pattern view here
+                     p' <- canonicalise eqs p
+                     pure (n, !(plusLazy (sizeCompareAsserted fuel !(asserted eqs aSmaller arg) p') (sizeCompare fuel arg p')))) pats
          let squashed = fromListWith (|+|) res
          pure $ toList squashed
 
