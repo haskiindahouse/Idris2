@@ -9,6 +9,7 @@ import Core.Evaluate
 import Core.Name.CompatibleVars
 
 import Data.String
+import Data.List
 import Data.SnocList.Quantifiers
 
 import Libraries.Data.SnocList.SizeOf
@@ -99,6 +100,10 @@ scEq' (VType _ _) (VType _ _) = pure True
 scEq' _ _ = pure False -- other cases not checkable
 
 scEq x y = scEq' !(dropLazy x) !(dropLazy y)
+
+dropErasedSp : Spine vars -> Spine vars
+dropErasedSp [<] = [<]
+dropErasedSp (sp :< e) = if isErased e.multiplicity then dropErasedSp sp else dropErasedSp sp :< e
 
 data Guardedness = Toplevel | Unguarded | Guarded | InDelay
 
@@ -274,6 +279,12 @@ nextVar
          put SCVar (v + 1)
          pure (mkvar v)
 
+-- Label for a Ref holding the full Name of the function whose definition is
+-- currently being size-change checked (set once per definition in getSC).
+-- Needed so that descent into erased (Rig0) arguments can keep self-call
+-- edges while discarding edges to foreign names (see findSCcall).
+data SCFn : Type where
+
 ForcedEqs : Type
 ForcedEqs = List (Glued [<], Glued [<])
 
@@ -306,6 +317,7 @@ canonicalise eqs val = pure val
 mutual
   findSC : {auto c : Ref Ctxt Defs} ->
            {auto v : Ref SCVar Int} ->
+           {auto scfn : Ref SCFn Name} ->
            Guardedness ->
            ForcedEqs ->
            List (Nat, Glued [<]) -> -- LHS args and their position
@@ -359,6 +371,7 @@ mutual
 
   findSCAppFunc : {auto c : Ref Ctxt Defs} ->
                   {auto v : Ref SCVar Int} ->
+                  {auto scfn : Ref SCFn Name} ->
                   Guardedness ->
                   ForcedEqs ->
                   List (Nat, Glued [<]) -> -- LHS args and their position
@@ -380,7 +393,7 @@ mutual
                 -- arguments
                 InDelay => findSCspine Unguarded eqs args sp
                 _ => do fn_args <- traverseSnocList value sp
-                        findSCcall Unguarded eqs args fc fn (cast fn_args)
+                        findSCcall Unguarded eqs args fc fn (cast fn_args) (cast (map (\e => isErased e.multiplicity) sp))
     where
       isAssertTotal : Name -> Bool
       isAssertTotal = (== NS builtinNS (UN $ Basic "assert_total"))
@@ -394,6 +407,7 @@ mutual
 
   findSCapp : {auto c : Ref Ctxt Defs} ->
               {auto v : Ref SCVar Int} ->
+              {auto scfn : Ref SCFn Name} ->
               Guardedness ->
               ForcedEqs ->
               List (Nat, Glued [<]) -> -- LHS args and their position
@@ -421,15 +435,20 @@ mutual
       = findSCspine InDelay eqs pats sp
   findSCapp Guarded eqs pats (VDCon fc n t a sp)
       = do defs <- get Ctxt
-           findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value sp))
+           erCalls <- findSCspineErasedSelf Guarded eqs pats sp
+           calls <- findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value (dropErasedSp sp))) (toList (map (\e => isErased e.multiplicity) (dropErasedSp sp)))
+           pure (calls ++ erCalls)
   findSCapp Toplevel eqs pats (VDCon fc n t a sp)
       = do defs <- get Ctxt
-           findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value sp))
+           erCalls <- findSCspineErasedSelf Guarded eqs pats sp
+           calls <- findSCcall Guarded eqs pats fc n (toList !(traverseSnocList value (dropErasedSp sp))) (toList (map (\e => isErased e.multiplicity) (dropErasedSp sp)))
+           pure (calls ++ erCalls)
   findSCapp g eqs pats tm = pure [] -- not an application (TODO: VTCon)
 
 
   findSCscope : {auto c : Ref Ctxt Defs} ->
                 {auto v : Ref SCVar Int} ->
+                {auto scfn : Ref SCFn Name} ->
                 Guardedness ->
                 ForcedEqs ->
                 List (Nat, Glued [<]) -> -- LHS args and their position
@@ -476,6 +495,7 @@ mutual
 
   findSCalt : {auto c : Ref Ctxt Defs} ->
               {auto v : Ref SCVar Int} ->
+              {auto scfn : Ref SCFn Name} ->
               Guardedness ->
               ForcedEqs ->
               List (Nat, Glued [<]) -> -- LHS args and their position
@@ -502,6 +522,7 @@ mutual
 
   findSCspine : {auto c : Ref Ctxt Defs} ->
            {auto v : Ref SCVar Int} ->
+           {auto scfn : Ref SCFn Name} ->
            Guardedness ->
            ForcedEqs ->
            List (Nat, Glued [<]) -> -- LHS args and their position
@@ -512,6 +533,62 @@ mutual
       = do vCalls <- findSC g eqs pats !(value e)
            spCalls <- findSCspine g eqs pats sp
            pure (vCalls ++ spCalls)
+
+  -- The constructor/AllGuarded application path drops erased (Rig0) spine
+  -- entries from the size-change matrix (dropErasedSp), which also used to
+  -- hide DIRECT self-recursion routed through an erased argument of a
+  -- constructor or AllGuarded function (e.g. `bad n = step n (bad n)` where
+  -- `step n (0 ih) = MkP n` is AllGuarded). Inspect the erased entries here
+  -- with the same self-call treatment as findSCcall (findSCerasedArg);
+  -- foreign calls inside erased arguments stay invisible.
+  findSCspineErasedSelf : {auto c : Ref Ctxt Defs} ->
+           {auto v : Ref SCVar Int} ->
+           {auto scfn : Ref SCFn Name} ->
+           Guardedness ->
+           ForcedEqs ->
+           List (Nat, Glued [<]) -> -- LHS args and their position
+           Spine [<] ->
+           Core (List SCCall)
+  findSCspineErasedSelf g eqs pats [<] = pure []
+  findSCspineErasedSelf g eqs pats (sp :< e)
+      = do rest <- findSCspineErasedSelf g eqs pats sp
+           if isErased e.multiplicity
+              then do arg <- canonicalise eqs !(value e)
+                      cs <- findSCerasedArg g eqs pats arg
+                      pure (rest ++ cs)
+              else pure rest
+
+  -- An erased (Rig0) argument cannot influence runtime behaviour, and erased
+  -- proof terms routinely mention foreign combinators applied to unchanged
+  -- arguments, which size-change analysis cannot see as decreasing;
+  -- descending into them caused false not-total verdicts (deptycheck Gen SCC
+  -- on ca73). So in general we do NOT descend into erased arguments.
+  -- EXCEPT: when the erased argument is HEADED by a direct call to the very
+  -- function being checked, the definition feeds its own result back into
+  -- itself (e.g. `falseEmpty = step2 falseEmpty` with
+  -- `step2 : (0 _ : Empty) -> Empty`), and ignoring that is unsound (it
+  -- proves Void): descend and keep only the self-edges. Known remaining
+  -- holes (upstream issue material): self-calls nested strictly under a
+  -- foreign head inside an erased argument, and mutual recursion routed
+  -- exclusively through erased arguments.
+  findSCerasedArg : {auto c : Ref Ctxt Defs} ->
+           {auto v : Ref SCVar Int} ->
+           {auto scfn : Ref SCFn Name} ->
+           Guardedness ->
+           ForcedEqs ->
+           List (Nat, Glued [<]) -> -- LHS args and their position
+           Glued [<] -> -- the erased argument value
+           Core (List SCCall)
+  findSCerasedArg g eqs pats arg
+      = do under <- get SCFn
+           hd <- dropLazy arg
+           case hd of
+             VApp _ Func n _ _ =>
+                if !(getFullName n) == under
+                   then do cs <- logDepth $ findSC g eqs pats arg
+                           pure (filter (\sc => fnCall sc == under) cs)
+                   else pure []
+             _ => pure []
 
 
 
@@ -542,12 +619,14 @@ mutual
 
   findSCcall : {auto c : Ref Ctxt Defs} ->
                {auto v : Ref SCVar Int} ->
+               {auto scfn : Ref SCFn Name} ->
                Guardedness ->
                ForcedEqs ->
                List (Nat, Glued [<]) ->
                FC -> Name -> List (Glued [<]) ->
+               List Bool ->
                Core (List SCCall)
-  findSCcall g eqs pats fc fn_in args
+  findSCcall g eqs pats fc fn_in args margs
           -- Under 'assert_total' we assume that all calls are fine, so leave
           -- the size change list empty
         = do args <- traverse (canonicalise eqs) args
@@ -560,7 +639,10 @@ mutual
                                 pure (n, !(toFullNames !(quote [<] t)))) pats
                     targs <- traverse (\t => toFullNames !(quote [<] t)) args
                     pure ("Under " ++ show under ++ "\n" ++ "Args " ++ show targs)
-             scs <- traverse (\x => logDepth $ findSC g eqs pats x) args
+             scs <- traverse (\ (er, x) =>
+                        if er
+                           then findSCerasedArg g eqs pats x
+                           else logDepth $ findSC g eqs pats x) (zip margs args)
              pure ([MkSCCall fn
                    (fromListList
                         !(traverse (mkChange eqs aSmaller pats) args))
@@ -568,6 +650,7 @@ mutual
 
 findSCTop : {auto c : Ref Ctxt Defs} ->
             {auto v : Ref SCVar Int} ->
+            {auto scfn : Ref SCFn Name} ->
             Nat -> List (Nat, Glued [<]) -> Glued [<] -> Core (List SCCall)
 findSCTop i args (VBind _ _ (Lam _ _ _ _) sc)
     = do arg <- nextVar
@@ -575,16 +658,17 @@ findSCTop i args (VBind _ _ (Lam _ _ _ _) sc)
 findSCTop i args def = findSC Toplevel [] (reverse args) def
 
 getSC : {auto c : Ref Ctxt Defs} ->
-        Defs -> Def -> Core (List SCCall)
-getSC defs (Function _ tm _ pats)
+        Defs -> Name -> Def -> Core (List SCCall)
+getSC defs fn (Function _ tm _ pats)
    = do logTerm "totality.termination.sizechange" 5 "From term" tm
         logC "totality.termination.sizechange" 5 $ pure "From pats \{show !(toFullNames pats)}"
         ntm <- nfTotality [<] tm
         logNF "totality.termination.sizechange" 5 "From tree" [<] ntm
         v <- newRef SCVar 0
+        u <- newRef SCFn !(getFullName fn)
         sc <- findSCTop 0 [] ntm
         pure $ nub sc
-getSC defs _ = pure []
+getSC defs _ _ = pure []
 
 export
 calculateSizeChange : {auto c : Ref Ctxt Defs} ->
@@ -594,6 +678,6 @@ calculateSizeChange loc n
          defs <- get Ctxt
          Just def <- lookupCtxtExact n (gamma defs)
               | Nothing => undefinedName loc n
-         r <- getSC defs (definition def)
+         r <- getSC defs n (definition def)
          log "totality.termination.sizechange" 5 $ "Calculated: " ++ show r
          pure r

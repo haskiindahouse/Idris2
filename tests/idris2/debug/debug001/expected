@@ -89,14 +89,12 @@ Refers to (runtime): _builtin.CONS, _builtin.NIL, Prelude.Types.SnocList.filter
 Flags: total
 Size change:
   Prelude.Basics.Lin:
-    l 0 1 2
-  r +------
-  0 | =   <
+    l
+  r +
   Prelude.Basics.(:<):
     l 0 1 2
   r +------
-  0 | =   <
-  2 |     <
+  1 |     <
   Prelude.Types.SnocList.filter:
     l 0 1 2
   r +------
